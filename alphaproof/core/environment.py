@@ -109,7 +109,7 @@ class Environment:
         if self._sent_imports:
             return
         for module in self.imports:
-            self._env.send_command(f'import {module}')
+            self._env.send_command(f'import {module}', timeout=900.0)
         self._sent_imports = True
 
     def _state_from_branch(
