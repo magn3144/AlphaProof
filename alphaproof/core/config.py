@@ -122,6 +122,7 @@ class Config:
         self.mm_fully_decided_trust_count = 12
         self.mm_proved_weight = 1e-3
         self.mm_undecided_weight = 0.1
+        self.mm_simulation_failure_window = 32
         self.mm_simulation_failure_multiplier = 1.17
         self.mm_max_num_simulations = 16_000
 

@@ -112,7 +112,9 @@ class Matchmaker:
 
     def compute_num_simulations(self, theorem: Theorem, stats: Stats) -> int:
         """Compute number of simulations to run for a theorem."""
-        recent_attempts = stats.attempts[-self.config.mm_trust_count :]
+        recent_attempts = stats.attempts[
+            -self.config.mm_simulation_failure_window:
+        ]
         failures = sum(not success for _, success in recent_attempts)
         num_simulations = int(
                 self.config.num_simulations

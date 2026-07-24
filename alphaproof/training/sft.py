@@ -101,6 +101,7 @@ def token_length(tokenizer: PreTrainedTokenizerBase, text: str) -> int:
         add_special_tokens=True,
         truncation=False,
         return_attention_mask=False,
+        verbose=False,
     )
     return len(encoded['input_ids'])
 
