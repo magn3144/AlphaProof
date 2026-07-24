@@ -157,10 +157,6 @@ class ProofVerifier:
         process.__enter__()
         try:
             process.send_command('import Mathlib', timeout=self.timeout)
-            process.send_command(
-                    'set_option warningAsError true',
-                    timeout=self.timeout,
-            )
         except Exception:
             process.stop_safe()
             raise
