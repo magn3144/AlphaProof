@@ -5,7 +5,7 @@ from typing import Callable
 from alphaproof.core.environment import Environment
 from alphaproof.core.paths import (
     DATASET_DIR,
-    DEFAULT_THEOREMS_PATH,
+    DEFAULT_THEOREMS_DIR,
     LEAN_PROJECT_DIR,
     MODELS_DIR,
     RUNS_DIR,
@@ -29,7 +29,7 @@ class Config:
             lambda: Environment(LeanProject(str(LEAN_PROJECT_DIR)))
         ),
         tokenizer_model: str = str(MODELS_DIR / 'Salesforce--codet5p-220m'),
-        dataset_path: str | Path = DEFAULT_THEOREMS_PATH,
+        dataset_dir: str | Path = DEFAULT_THEOREMS_DIR,
         sft_dataset_path: str | Path = (
             DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
         ),
@@ -49,6 +49,8 @@ class Config:
         validation_fraction: float = 0.05,
         validation_batch_size: int = 64,
         validation_interval: int = 100,
+        theorem_validation_interval_games: int = 50,
+        theorem_validation_num_theorems: int = 20,
         log_interval: int = 10,
         reward_window: int = 100,
         wandb_project: str = 'alphaproof',
@@ -58,7 +60,10 @@ class Config:
         """Populate acting, search, training, and matchmaker settings."""
         ### Acting
         self.environment_ctor = environment_ctor
-        self.dataset_path = Path(dataset_path)
+        self.dataset_dir = Path(dataset_dir)
+        self.train_dataset_path = self.dataset_dir / 'train.jsonl'
+        self.validation_dataset_path = self.dataset_dir / 'validation.jsonl'
+        self.test_dataset_path = self.dataset_dir / 'test.jsonl'
         self.sft_dataset_path = Path(sft_dataset_path)
         self.sft_run_dir = Path(sft_run_dir) if sft_run_dir is not None else None
         if self.sft_run_dir is None:
@@ -108,6 +113,10 @@ class Config:
         self.validation_fraction = validation_fraction
         self.validation_batch_size = validation_batch_size
         self.validation_interval = validation_interval
+        self.theorem_validation_interval_games = (
+            theorem_validation_interval_games
+        )
+        self.theorem_validation_num_theorems = theorem_validation_num_theorems
         self.log_interval = log_interval
         self.reward_window = reward_window
 

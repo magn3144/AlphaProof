@@ -24,14 +24,14 @@ export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_02}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_03}"
 
 nvidia-smi
 uv sync --frozen
 
 set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
-    --dataset-path data/dataset/codex_theorems.jsonl \
+    --dataset-dir data/dataset/codex_theorems \
     --num-simulations 250 \
     --num-games 500 \
     --batch-size 20 \

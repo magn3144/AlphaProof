@@ -2,39 +2,25 @@ import argparse
 import gc
 import json
 import math
-import os
-import random
 import uuid
 from pathlib import Path
 from typing import Any
 
 import torch
-import wandb
 
-from alphaproof.core.actors import run_actor
 from alphaproof.core.config import Config
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
+from alphaproof.training.actor_phase import run_actor_phase
 from alphaproof.training.matchmaker import Matchmaker
+from alphaproof.training.randomness import seed_everything
 from alphaproof.training.replay_buffer import ReplayBuffer
-from alphaproof.training.run_logger import RunLogger
+from alphaproof.training.run_config import CONFIG_FILE, save_run_config
+from alphaproof.training.run_logger import RunLogger, initialize_wandb
 from alphaproof.training.shared_storage import SharedStorage
 
 
-CONFIG_FILE = 'config.json'
 REPLAY_FILE = 'replay_buffer.jsonl'
-
-
-def seed_everything(seed: int) -> None:
-    """Configure deterministic random number generation for training."""
-    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-    random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
 
 
 def train_network(
@@ -89,11 +75,6 @@ def train_network(
     return step
 
 
-def launch_job(function, *args):
-    """Launch a worker job in the pseudocode runtime."""
-    return function(*args)
-
-
 def alphaproof_train(
     config: Config,
     run_dir: Path,
@@ -130,17 +111,16 @@ def alphaproof_train(
 
     for iteration in range(config.training_iterations):
         game_target = (iteration + 1) * games_per_iteration
-        games_to_run = game_target - logger.games_completed
-        if games_to_run > 0:
-            launch_job(
-                run_actor,
-                config,
-                storage,
-                replay_buffer,
-                matchmaker,
-                games_to_run,
-                lambda game: logger.log_game(game, len(replay_buffer)),
-            )
+        run_actor_phase(
+            config,
+            run_dir,
+            resume,
+            storage,
+            replay_buffer,
+            matchmaker,
+            logger,
+            game_target,
+        )
 
         step_target = (iteration + 1) * steps_per_iteration
         steps_to_run = step_target - step
@@ -160,23 +140,6 @@ def alphaproof_train(
     return network
 
 
-def serializable_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Convert CLI paths to JSON-compatible strings."""
-    return {
-        name: str(value) if isinstance(value, Path) else value
-        for name, value in vars(args).items()
-    }
-
-
-def serializable_config(config: Config) -> dict[str, Any]:
-    """Convert the full AlphaProof configuration to JSON values."""
-    return {
-        name: str(value) if isinstance(value, Path) else value
-        for name, value in vars(config).items()
-        if name != 'environment_ctor'
-    }
-
-
 def make_config(
     args: argparse.Namespace,
     saved_config: dict[str, Any] | None = None,
@@ -185,7 +148,7 @@ def make_config(
     config = Config(
         num_simulations=args.num_simulations,
         batch_size=args.batch_size,
-        dataset_path=args.dataset_path,
+        dataset_dir=args.dataset_dir,
         sft_dataset_path=args.sft_dataset_path,
         sft_fraction=args.sft_fraction,
         disprove_rate=args.disprove_rate,
@@ -202,7 +165,10 @@ def make_config(
     if saved_config is not None:
         for name, value in saved_config.items():
             if name in (
-                'dataset_path',
+                'dataset_dir',
+                'train_dataset_path',
+                'validation_dataset_path',
+                'test_dataset_path',
                 'sft_dataset_path',
                 'sft_run_dir',
                 'initial_params_path',
@@ -210,29 +176,6 @@ def make_config(
                 value = Path(value) if value is not None else None
             setattr(config, name, value)
     return config
-
-
-def initialize_wandb(
-    args: argparse.Namespace,
-    config: Config,
-) -> Any:
-    """Initialize W&B with the run's saved settings."""
-    wandb_run: Any = wandb.init(
-        project=config.wandb_project,
-        entity=config.wandb_entity,
-        name=args.wandb_name or args.run_name,
-        id=args.wandb_run_id,
-        tags=config.wandb_tags,
-        mode=args.wandb_mode,
-        resume='allow' if args.resume else 'never',
-        config=serializable_config(config),
-    )
-    wandb_run.define_metric('actor/game')
-    wandb_run.define_metric('actor/*', step_metric='actor/game')
-    wandb_run.define_metric('learner/step')
-    wandb_run.define_metric('train/*', step_metric='learner/step')
-    wandb_run.define_metric('validation/*', step_metric='learner/step')
-    return wandb_run
 
 
 def positive_int(value: str) -> int:
@@ -252,7 +195,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--seed', type=int, default=defaults.seed)
     parser.add_argument('--debug', action='store_true', default=defaults.debug)
     parser.add_argument(
-        '--dataset-path', type=Path, default=defaults.dataset_path
+        '--dataset-dir', type=Path, default=defaults.dataset_dir
     )
     parser.add_argument(
         '--sft-dataset-path', type=Path, default=defaults.sft_dataset_path
@@ -320,10 +263,15 @@ def prepare_run(
     config = make_config(args)
     if config.sft_run_dir is None:
         raise ValueError('Set sft_run_dir in Config before starting RL.')
-    if not config.dataset_path.is_file():
-        raise FileNotFoundError(
-            f'Theorem dataset does not exist: {config.dataset_path}'
-        )
+    for dataset_path in (
+        config.train_dataset_path,
+        config.validation_dataset_path,
+        config.test_dataset_path,
+    ):
+        if not dataset_path.is_file():
+            raise FileNotFoundError(
+                f'Theorem dataset split does not exist: {dataset_path}'
+            )
     if not config.sft_dataset_path.is_file():
         raise FileNotFoundError(
             f'SFT dataset does not exist: {config.sft_dataset_path}'
@@ -350,24 +298,6 @@ def prepare_run(
 
     run_dir.mkdir(parents=True)
     return args, run_dir, None
-
-
-def save_run_config(
-    run_dir: Path,
-    args: argparse.Namespace,
-    config: Config,
-) -> None:
-    """Save CLI and complete algorithm configuration for a new run."""
-    with (run_dir / CONFIG_FILE).open('w', encoding='utf-8') as config_file:
-        json.dump(
-            {
-                'args': serializable_args(args),
-                'config': serializable_config(config),
-            },
-            config_file,
-            indent=2,
-        )
-        config_file.write('\n')
 
 
 def main() -> None:

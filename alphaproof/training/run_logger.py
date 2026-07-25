@@ -1,13 +1,44 @@
+import argparse
 import json
 from collections import deque
 from pathlib import Path
 from typing import Any
 
+import wandb
+
+from alphaproof.core.config import Config
 from alphaproof.core.game import Game
+from alphaproof.training.run_config import serializable_config
 
 
 RESULTS_FILE = 'results.jsonl'
 TIMINGS_FILE = 'timings.jsonl'
+VALIDATION_RESULTS_FILE = 'validation_results.jsonl'
+
+
+def initialize_wandb(
+    args: argparse.Namespace,
+    config: Config,
+) -> Any:
+    """Initialize W&B with the run's saved settings."""
+    wandb_run: Any = wandb.init(
+        project=config.wandb_project,
+        entity=config.wandb_entity,
+        name=args.wandb_name or args.run_name,
+        id=args.wandb_run_id,
+        tags=config.wandb_tags,
+        mode=args.wandb_mode,
+        resume='allow' if args.resume else 'never',
+        config=serializable_config(config),
+    )
+    wandb_run.define_metric('actor/game')
+    wandb_run.define_metric('actor/*', step_metric='actor/game')
+    wandb_run.define_metric('learner/step')
+    wandb_run.define_metric('train/*', step_metric='learner/step')
+    wandb_run.define_metric('replay_validation/*', step_metric='learner/step')
+    wandb_run.define_metric('validation/game')
+    wandb_run.define_metric('validation/*', step_metric='validation/game')
+    return wandb_run
 
 
 class RunLogger:
@@ -23,6 +54,8 @@ class RunLogger:
         self.results_path.touch(exist_ok=True)
         self.timings_path = run_dir / TIMINGS_FILE
         self.timings_path.touch(exist_ok=True)
+        self.validation_results_path = run_dir / VALIDATION_RESULTS_FILE
+        self.validation_results_path.touch(exist_ok=True)
         self.reward_window = reward_window
         self.wandb_run = wandb_run
         successes, rewards = self._load_results()
@@ -31,6 +64,7 @@ class RunLogger:
             successes[-reward_window:], maxlen=reward_window
         )
         self.recent_rewards = deque(rewards[-reward_window:], maxlen=reward_window)
+        self.validation_games = self._load_validation_games()
 
     def log_game(self, game: Game, replay_size: int) -> None:
         """Persist and log one actor result."""
@@ -126,11 +160,60 @@ class RunLogger:
             'replay/train_size': replay_size,
         }
         if validation_loss is not None:
-            metrics['validation/replay_loss'] = validation_loss
+            metrics['replay_validation/loss'] = validation_loss
         self.wandb_run.log(metrics)
         message = f'Step {step}: train loss {train_loss:.4f}'
         if validation_loss is not None:
             message += f', replay validation loss {validation_loss:.4f}'
+        print(message, flush=True)
+
+    def log_validation(
+        self,
+        game: int,
+        games: list[Game | None],
+    ) -> None:
+        """Persist and log one fixed-theorem validation pass."""
+        solved_games = [
+            validation_game
+            for validation_game in games
+            if validation_game is not None
+            and validation_game.root.is_optimal
+        ]
+        solve_rate = len(solved_games) / len(games)
+        average_reward = (
+            sum(
+                validation_game.root.value_target
+                for validation_game in solved_games
+            )
+            / len(solved_games)
+            if solved_games
+            else None
+        )
+        record = {
+            'game': game,
+            'num_theorems': len(games),
+            'num_solved': len(solved_games),
+            'solve_rate': solve_rate,
+            'average_reward': average_reward,
+        }
+        with self.validation_results_path.open(
+            'a', encoding='utf-8'
+        ) as validation_file:
+            validation_file.write(json.dumps(record) + '\n')
+        self.validation_games.add(game)
+
+        metrics = {
+            'validation/game': game,
+            'validation/solve_rate': solve_rate,
+            'validation/average_reward': average_reward,
+        }
+        self.wandb_run.log(metrics)
+
+        message = (
+            f'Validation after game {game}: solve rate {solve_rate:.3f}'
+        )
+        if average_reward is not None:
+            message += f', average reward {average_reward:.3f}'
         print(message, flush=True)
 
     def finish(self) -> None:
@@ -150,3 +233,11 @@ class RunLogger:
                 if record['episode_reward'] is not None:
                     rewards.append(int(record['episode_reward']))
         return successes, rewards
+
+    def _load_validation_games(self) -> set[int]:
+        """Load completed validation points when resuming."""
+        games = set()
+        with self.validation_results_path.open(encoding='utf-8') as results_file:
+            for line in results_file:
+                games.add(int(json.loads(line)['game']))
+        return games

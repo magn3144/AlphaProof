@@ -59,7 +59,7 @@ class Matchmaker:
         self.config = config
         self.run_dir = RUNS_DIR / str(config.run_id)
         self.stats_path = self.run_dir / MATCHMAKER_STATS_FILE
-        self.theorem_stats = self._load_theorem_stats(config.dataset_path)
+        self.theorem_stats = self._load_theorem_stats(config.train_dataset_path)
         self._save_theorem_stats()
 
     def _load_theorem_stats(self, dataset_path: Path) -> dict[Theorem, Stats]:

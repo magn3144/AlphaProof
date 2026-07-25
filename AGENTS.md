@@ -12,6 +12,7 @@
 - Scripts that should only be executed once, like downloading a dataset, should be in the scripts folder.
 - Dont write tests. Its not necessary for this project.
 - LeanTree is used as a submodule. Dont edit this, just see it as a library.
+- I want the main AlphaProof algorithm files (like train.py and actors.py) to be as minimal as possible, focusing on just implementing the core algorithm. Less important code like logging should be placed in separate files.
 
 
 # Design choices
