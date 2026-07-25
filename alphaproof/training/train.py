@@ -33,6 +33,7 @@ def train_network(
     logger: RunLogger,
 ) -> int:
     """Run one learner phase and return the latest global step."""
+    logger.log_learner_start(start_step, num_steps)
     validation_batch = replay_buffer.validation_batch(
         config.validation_batch_size
     )
@@ -318,8 +319,11 @@ def main() -> None:
             args.resume,
             logger,
         )
-    finally:
-        logger.finish()
+    except BaseException as error:
+        logger.log_crash(error)
+        logger.finish(exit_code=1)
+        raise
+    logger.finish(exit_code=0)
 
 
 if __name__ == '__main__':

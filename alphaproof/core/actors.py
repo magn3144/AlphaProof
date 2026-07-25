@@ -36,6 +36,7 @@ def run_actor(
         matchmaker: Matchmaker,
         num_games: int,
         on_game: Callable[[Game], None] | None = None,
+        on_game_start: Callable[[Game], None] | None = None,
 ):
     """Generate solved games from the latest checkpoint."""
     network = Network(config)
@@ -44,7 +45,13 @@ def run_actor(
         while games_completed < num_games:
             network.params = storage.latest_params()
             game_start = perf_counter()
-            game = play_game(config, network, matchmaker, verifier)
+            game = play_game(
+                config,
+                network,
+                matchmaker,
+                verifier,
+                on_game_start,
+            )
             if game is None:
                 continue
             game.timings.total_seconds = perf_counter() - game_start
@@ -65,9 +72,12 @@ def play_game(
         network: Network,
         matchmaker: Matchmaker,
         verifier: ProofVerifier,
+        on_game_start: Callable[[Game], None] | None = None,
 ) -> Game | None:
     """Run one theorem episode and validate any discovered proof."""
     game = matchmaker.get_start_position()
+    if on_game_start is not None:
+        on_game_start(game)
     setup_start = perf_counter()
     with config.environment_ctor() as environment:
         try:

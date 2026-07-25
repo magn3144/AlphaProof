@@ -23,6 +23,7 @@ export OMP_NUM_THREADS=4
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
+export PYTHONFAULTHANDLER=1
 
 RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_03}"
 
@@ -48,4 +49,9 @@ else
     echo "Starting new RL run ${RUN_NAME}."
 fi
 
+set +e
 uv run --no-sync python "$@"
+training_status=$?
+echo "Training command exited with status ${training_status} at $(date --iso-8601=seconds)."
+nvidia-smi
+exit "${training_status}"

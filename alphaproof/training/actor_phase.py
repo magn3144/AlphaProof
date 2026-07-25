@@ -59,5 +59,6 @@ def run_actor_phase(
             matchmaker,
             games_to_run,
             lambda game: logger.log_game(game, len(replay_buffer)),
+            logger.log_game_start,
         )
         run_validation_if_due(config, storage, logger, validation_theorems)

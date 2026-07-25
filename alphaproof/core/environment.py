@@ -92,7 +92,7 @@ class Environment:
 
     def close(self) -> None:
         """Stop the underlying Lean process."""
-        self._env.__exit__(None, None, None)
+        self._env.stop_safe()
 
     def __enter__(self):
         return self

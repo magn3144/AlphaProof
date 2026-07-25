@@ -9,6 +9,7 @@ import wandb
 from alphaproof.core.config import Config
 from alphaproof.core.game import Game
 from alphaproof.training.run_config import serializable_config
+from alphaproof.training.run_diagnostics import RunDiagnostics
 
 
 RESULTS_FILE = 'results.jsonl'
@@ -30,6 +31,10 @@ def initialize_wandb(
         mode=args.wandb_mode,
         resume='allow' if args.resume else 'never',
         config=serializable_config(config),
+        settings=wandb.Settings(
+            finish_timeout=60.0,
+            finish_timeout_raises=True,
+        ),
     )
     wandb_run.define_metric('actor/game')
     wandb_run.define_metric('actor/*', step_metric='actor/game')
@@ -58,6 +63,7 @@ class RunLogger:
         self.validation_results_path.touch(exist_ok=True)
         self.reward_window = reward_window
         self.wandb_run = wandb_run
+        self.diagnostics = RunDiagnostics(run_dir)
         successes, rewards = self._load_results()
         self.games_completed = len(successes)
         self.recent_successes = deque(
@@ -65,6 +71,16 @@ class RunLogger:
         )
         self.recent_rewards = deque(rewards[-reward_window:], maxlen=reward_window)
         self.validation_games = self._load_validation_games()
+
+    def log_game_start(self, game: Game) -> None:
+        """Persist the game being started before Lean is launched."""
+        game_number = self.games_completed + 1
+        self.diagnostics.game_started(game_number, game)
+        print(f'Starting game {game_number}: {game.theorem}', flush=True)
+
+    def log_learner_start(self, start_step: int, num_steps: int) -> None:
+        """Persist the learner range about to run."""
+        self.diagnostics.learner_started(start_step, start_step + num_steps)
 
     def log_game(self, game: Game, replay_size: int) -> None:
         """Persist and log one actor result."""
@@ -216,9 +232,23 @@ class RunLogger:
             message += f', average reward {average_reward:.3f}'
         print(message, flush=True)
 
-    def finish(self) -> None:
-        """Finish the W&B run."""
-        self.wandb_run.finish()
+    def log_crash(self, error: BaseException) -> None:
+        """Persist a fatal error before W&B shutdown."""
+        self.diagnostics.crash(error)
+
+    def finish(self, exit_code: int) -> None:
+        """Finish W&B without hiding an existing training failure."""
+        try:
+            self.wandb_run.finish(exit_code=exit_code)
+        except Exception as error:
+            self.diagnostics.wandb_finish_failed(error)
+            if exit_code == 0:
+                raise
+        else:
+            if exit_code == 0:
+                self.diagnostics.complete()
+        finally:
+            self.diagnostics.close()
 
     def _load_results(self) -> tuple[list[int], list[int]]:
         """Load completed successes and solved rewards when resuming."""
