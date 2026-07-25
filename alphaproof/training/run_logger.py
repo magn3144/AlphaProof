@@ -159,9 +159,7 @@ class RunLogger:
         if reward is not None:
             message += f', reward {reward}'
         if game.error is not None:
-            message += f', error: {game.error}'
-        if not success:
-            message += f'\nTheorem:\n{game.theorem}'
+            message += f', error: {game.error}\nTheorem:\n{game.theorem}'
         print(message, flush=True)
 
     def log_training(
