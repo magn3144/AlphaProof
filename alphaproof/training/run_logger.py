@@ -76,7 +76,7 @@ class RunLogger:
         """Persist the game being started before Lean is launched."""
         game_number = self.games_completed + 1
         self.diagnostics.game_started(game_number, game)
-        print(f'Starting game {game_number}: {game.theorem}', flush=True)
+        print(f'Starting game {game_number}.', flush=True)
 
     def log_learner_start(self, start_step: int, num_steps: int) -> None:
         """Persist the learner range about to run."""
@@ -160,6 +160,8 @@ class RunLogger:
             message += f', reward {reward}'
         if game.error is not None:
             message += f', error: {game.error}'
+        if not success:
+            message += f'\nTheorem:\n{game.theorem}'
         print(message, flush=True)
 
     def log_training(

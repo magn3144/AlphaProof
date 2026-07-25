@@ -1,14 +1,14 @@
 #!/bin/sh
 #BSUB -q gpuv100
-#BSUB -J rl_codet5p_220m_v100
+#BSUB -J rl_codet5p_codex_v100
 #BSUB -n 4
 #BSUB -R "span[hosts=1]"
 #BSUB -R "select[gpu32gb]"
 #BSUB -R "rusage[mem=8GB]"
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o scripts/batch/logs/rl_codet5p_220m_%J.out
-#BSUB -e scripts/batch/logs/rl_codet5p_220m_%J.err
+#BSUB -o scripts/batch/logs/rl_codet5p_codex_%J.out
+#BSUB -e scripts/batch/logs/rl_codet5p_codex_%J.err
 
 set -eu
 
@@ -25,14 +25,14 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_04}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_codex_theorems_01}"
 
 nvidia-smi
 uv sync --frozen
 
 set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
-    --dataset-dir data/dataset/numina_math_lean_cleaned \
+    --dataset-dir data/dataset/codex_theorems \
     --num-simulations 250 \
     --num-games 2000 \
     --batch-size 20 \
