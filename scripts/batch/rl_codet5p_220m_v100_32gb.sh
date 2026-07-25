@@ -32,14 +32,14 @@ uv sync --frozen
 
 set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
-    --dataset-dir data/dataset/codex_theorems \
+    --dataset-dir data/dataset/numina_math_lean_cleaned \
     --num-simulations 250 \
     --num-games 500 \
     --batch-size 20 \
     --learning-rate 1e-5 \
     --training-steps 10000 \
     --training-iterations 50 \
-    --checkpoint-interval 250 \
+    --checkpoint-interval 2500 \
     --wandb-mode online
 
 if [ -d "data/runs/${RUN_NAME}" ]; then
