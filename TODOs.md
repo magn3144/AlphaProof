@@ -23,7 +23,7 @@
 
 ## Training
 - [X] Train on SFT dataset.
-- [ ] Train on formalized theorems using AlphaProof.
+- [X] Train on formalized theorems using AlphaProof.
 
 ## Interactive Environment
 - [X] Visualize agent AND-OR search tree.

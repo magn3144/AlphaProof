@@ -30,6 +30,7 @@ class ReplayBuffer:
         self.sft_batch_size = round(sft_batch_size)
         if not 0 < self.sft_batch_size < self.batch_size:
             raise ValueError('Each batch must contain both SFT and replay data.')
+        self.replay_batch_size = self.batch_size - self.sft_batch_size
         self.max_state_length = config.max_state_length
         self.max_action_length = config.max_action_length
         if not 0 < config.validation_fraction < 1:
@@ -69,18 +70,16 @@ class ReplayBuffer:
         return len(self.buffer)
 
     def sample_batch(self) -> list[TokenizedTransition]:
-        """Sample the target mix, filling unavailable replay slots with SFT."""
-        replay_batch_size = min(
-            len(self.buffer), self.batch_size - self.sft_batch_size
-        )
-        sft_batch_size = self.batch_size - replay_batch_size
+        """Sample a batch containing the configured SFT and replay mix."""
         batch = [
             self._tokenize_transition(random.choice(self.sft_buffer))
-            for _ in range(sft_batch_size)
+            for _ in range(self.sft_batch_size)
         ]
         batch.extend(
             self._tokenize_transition(transition)
-            for transition in random.sample(self.buffer, replay_batch_size)
+            for transition in random.sample(
+                self.buffer, self.replay_batch_size
+            )
         )
         random.shuffle(batch)
         return batch

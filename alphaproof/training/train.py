@@ -125,7 +125,10 @@ def alphaproof_train(
 
         step_target = (iteration + 1) * steps_per_iteration
         steps_to_run = step_target - step
-        if steps_to_run > 0:
+        if (
+            steps_to_run > 0
+            and len(replay_buffer) >= replay_buffer.replay_batch_size
+        ):
             step = train_network(
                 config,
                 network,
