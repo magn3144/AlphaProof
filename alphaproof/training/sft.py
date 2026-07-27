@@ -273,6 +273,8 @@ def train_epoch(
     network: Network,
     data_loader: DataLoader[Any],
     validation_loader: DataLoader[Any],
+    train_examples_per_epoch: int,
+    validation_samples: int,
     args: argparse.Namespace,
     epoch: int,
     logger: SFTLogger,
@@ -322,7 +324,7 @@ def train_epoch(
                 batch_policy_loss,
                 batch_value_loss,
                 network.optimizer.param_groups[0]['lr'],
-                (epoch - 1) * len(data_loader.dataset) + examples_seen,
+                (epoch - 1) * train_examples_per_epoch + examples_seen,
             )
             print(
                 f'Epoch {epoch}/{args.epochs}, step {step}/{len(data_loader)}, '
@@ -341,7 +343,7 @@ def train_epoch(
             logger.log_validation(
                 global_step,
                 validation_metrics,
-                len(validation_loader.dataset),
+                validation_samples,
             )
             print(
                 f'Step {global_step}: validation loss '
@@ -670,6 +672,8 @@ def train(args: argparse.Namespace) -> Path:
                 network,
                 train_loader,
                 frequent_validation_loader,
+                len(train_examples),
+                len(frequent_validation_examples),
                 args,
                 epoch,
                 logger,
@@ -689,7 +693,7 @@ def train(args: argparse.Namespace) -> Path:
                 epoch,
                 training_metrics,
                 validation_metrics,
-                len(validation_loader.dataset),
+                len(validation_examples),
             )
             checkpoint_path = save_checkpoint(run_dir, network, epoch, args)
             print(
