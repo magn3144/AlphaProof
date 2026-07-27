@@ -4,6 +4,7 @@ import argparse
 import gc
 import json
 import random
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase, RobertaTokenize
 from alphaproof.core.config import Config
 from alphaproof.core.network import Network
 from alphaproof.core.paths import DATASET_DIR, MODELS_DIR, RUNS_DIR
+from alphaproof.training.run_config import serializable_args
+from alphaproof.training.sft_logger import SFTLogger
 
 
 DEFAULT_TRAIN_INPUT = (
@@ -24,7 +27,9 @@ DEFAULT_TRAIN_INPUT = (
 DEFAULT_VALIDATION_INPUT = (
     DATASET_DIR / 'leantree_mathlib_state_action_pairs.validation.jsonl'
 )
-DEFAULT_MODEL_PATH = MODELS_DIR / 'Salesforce--codet5p-220m'
+DEFAULT_MODEL_PATH = MODELS_DIR / 'Salesforce--codet5p-770m'
+DEFAULT_VALIDATION_INTERVAL = 500
+DEFAULT_VALIDATION_SAMPLES = 512
 TORCH_DTYPES = {
     'float32': torch.float32,
     'float16': torch.float16,
@@ -267,10 +272,12 @@ def train_batch(
 def train_epoch(
     network: Network,
     data_loader: DataLoader[Any],
+    validation_loader: DataLoader[Any],
     args: argparse.Namespace,
     epoch: int,
+    logger: SFTLogger,
 ) -> dict[str, float]:
-    """Train for one epoch and return mean component losses."""
+    """Train for one epoch, logging periodic train and validation metrics."""
     network.train()
     total_loss = 0.0
     total_policy_loss = 0.0
@@ -307,12 +314,41 @@ def train_epoch(
         total_loss += batch_loss * batch_size
         total_policy_loss += batch_policy_loss * batch_size
         total_value_loss += batch_value_loss * batch_size
+        global_step = (epoch - 1) * len(data_loader) + step
         if step % args.log_every == 0:
+            logger.log_training(
+                global_step,
+                batch_loss,
+                batch_policy_loss,
+                batch_value_loss,
+                network.optimizer.param_groups[0]['lr'],
+                (epoch - 1) * len(data_loader.dataset) + examples_seen,
+            )
             print(
                 f'Epoch {epoch}/{args.epochs}, step {step}/{len(data_loader)}, '
                 f'loss {total_loss / examples_seen:.4f}',
                 flush=True,
             )
+        if (
+            global_step % args.validation_interval == 0
+            and step < len(data_loader)
+        ):
+            validation_metrics = validate(
+                network,
+                validation_loader,
+                args.value_weight,
+            )
+            logger.log_validation(
+                global_step,
+                validation_metrics,
+                len(validation_loader.dataset),
+            )
+            print(
+                f'Step {global_step}: validation loss '
+                f"{validation_metrics['loss']:.4f}",
+                flush=True,
+            )
+            network.train()
 
     if oom_batches:
         print(
@@ -448,14 +484,6 @@ def validate(
     }
 
 
-def serializable_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Convert paths in an argparse namespace to JSON-compatible strings."""
-    return {
-        name: str(value) if isinstance(value, Path) else value
-        for name, value in vars(args).items()
-    }
-
-
 def append_metrics(path: Path, metrics: dict[str, Any]) -> None:
     """Append one epoch of training and validation metrics."""
     with path.open('a', encoding='utf-8') as metrics_file:
@@ -551,6 +579,10 @@ def train(args: argparse.Namespace) -> Path:
     if args.resume:
         if not run_dir.is_dir():
             raise FileNotFoundError(f'SFT run does not exist: {run_dir}')
+        saved_args = json.loads(
+            (run_dir / 'config.json').read_text(encoding='utf-8')
+        )
+        args.wandb_run_id = saved_args['wandb_run_id']
     elif run_dir.exists():
         raise FileExistsError(f'SFT run already exists: {run_dir}')
     else:
@@ -605,6 +637,17 @@ def train(args: argparse.Namespace) -> Path:
         collate_fn=collator,
         pin_memory=device.type == 'cuda',
     )
+    frequent_validation_examples = random.Random(args.seed).sample(
+        validation_examples,
+        k=min(args.validation_samples, len(validation_examples)),
+    )
+    frequent_validation_loader = DataLoader(
+        TransitionDataset(frequent_validation_examples),
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collator,
+        pin_memory=device.type == 'cuda',
+    )
 
     first_epoch = 1
     if args.resume:
@@ -620,26 +663,47 @@ def train(args: argparse.Namespace) -> Path:
 
     metrics_path = run_dir / 'metrics.jsonl'
     print(f'Training on {device}', flush=True)
-    for epoch in range(first_epoch, args.epochs + 1):
-        training_metrics = train_epoch(network, train_loader, args, epoch)
-        validation_metrics = validate(
-            network, validation_loader, args.value_weight
-        )
-        metrics = {
-            'epoch': epoch,
-            'train': training_metrics,
-            'validation': validation_metrics,
-        }
-        append_metrics(metrics_path, metrics)
-        checkpoint_path = save_checkpoint(run_dir, network, epoch, args)
-        print(
-            f"Finished epoch {epoch}/{args.epochs}: train loss "
-            f"{training_metrics['loss']:.4f}, validation loss "
-            f"{validation_metrics['loss']:.4f}; saved {checkpoint_path}",
-            flush=True,
-        )
+    logger = SFTLogger(args)
+    try:
+        for epoch in range(first_epoch, args.epochs + 1):
+            training_metrics = train_epoch(
+                network,
+                train_loader,
+                frequent_validation_loader,
+                args,
+                epoch,
+                logger,
+            )
+            validation_metrics = validate(
+                network, validation_loader, args.value_weight
+            )
+            global_step = epoch * len(train_loader)
+            metrics = {
+                'epoch': epoch,
+                'train': training_metrics,
+                'validation': validation_metrics,
+            }
+            append_metrics(metrics_path, metrics)
+            logger.log_epoch(
+                global_step,
+                epoch,
+                training_metrics,
+                validation_metrics,
+                len(validation_loader.dataset),
+            )
+            checkpoint_path = save_checkpoint(run_dir, network, epoch, args)
+            print(
+                f"Finished epoch {epoch}/{args.epochs}: train loss "
+                f"{training_metrics['loss']:.4f}, validation loss "
+                f"{validation_metrics['loss']:.4f}; saved {checkpoint_path}",
+                flush=True,
+            )
+        model_source_dir = save_network_source(run_dir, network, args.model)
+    except BaseException:
+        logger.finish(exit_code=1)
+        raise
+    logger.finish(exit_code=0)
 
-    model_source_dir = save_network_source(run_dir, network, args.model)
     print(
         f'Saved AlphaProof model metadata to {model_source_dir}',
         flush=True,
@@ -676,6 +740,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--max-action-length', type=positive_int, default=128)
     parser.add_argument('--max-grad-norm', type=float, default=1.0)
     parser.add_argument('--log-every', type=positive_int, default=100)
+    parser.add_argument(
+        '--validation-interval',
+        type=positive_int,
+        default=DEFAULT_VALIDATION_INTERVAL,
+        help='Optimizer steps between validation checks (default: 500).',
+    )
+    parser.add_argument(
+        '--validation-samples',
+        type=positive_int,
+        default=DEFAULT_VALIDATION_SAMPLES,
+        help='Fixed validation subset used for frequent checks (default: 512).',
+    )
+    parser.add_argument('--wandb-name')
+    parser.add_argument(
+        '--wandb-mode',
+        choices=('online', 'offline', 'disabled'),
+        default='disabled',
+    )
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', choices=('auto', 'cpu', 'cuda', 'mps'), default='auto')
     parser.add_argument(
@@ -686,6 +768,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
+    args.wandb_run_id = uuid.uuid4().hex
 
     if Path(args.run_name).name != args.run_name:
         parser.error('run_name must be a single directory name')
