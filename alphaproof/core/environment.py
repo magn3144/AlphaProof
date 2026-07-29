@@ -219,4 +219,4 @@ class Environment:
             raise
         except Exception as exc:
             raise ValueError(f'Invalid tactic {tactic!r}: {exc}') from exc
-        return self._state_from_branches(branches)
+        return self._state_from_branches(branches, reward=-1.0)
