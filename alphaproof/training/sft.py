@@ -275,6 +275,7 @@ def train_epoch(
     validation_loader: DataLoader[Any],
     train_examples_per_epoch: int,
     validation_samples: int,
+    run_dir: Path,
     args: argparse.Namespace,
     epoch: int,
     logger: SFTLogger,
@@ -351,6 +352,21 @@ def train_epoch(
                 flush=True,
             )
             network.train()
+        for checkpoint_index in range(1, args.checkpoints_per_epoch):
+            checkpoint_step = (
+                checkpoint_index * len(data_loader) + args.checkpoints_per_epoch - 1
+            ) // args.checkpoints_per_epoch
+            if step == checkpoint_step:
+                checkpoint_epoch = (
+                    epoch - 1 + checkpoint_index / args.checkpoints_per_epoch
+                )
+                checkpoint_path = save_checkpoint(
+                    run_dir,
+                    network,
+                    checkpoint_epoch,
+                    args,
+                )
+                print(f'Saved {checkpoint_path}', flush=True)
 
     if oom_batches:
         print(
@@ -495,13 +511,13 @@ def append_metrics(path: Path, metrics: dict[str, Any]) -> None:
 def save_checkpoint(
     run_dir: Path,
     network: Network,
-    epoch: int,
+    epoch: float,
     args: argparse.Namespace,
 ) -> Path:
     """Save resumable training state and AlphaProof-compatible parameters."""
     checkpoints_dir = run_dir / 'checkpoints'
     checkpoints_dir.mkdir(exist_ok=True)
-    checkpoint_path = checkpoints_dir / f'checkpoint_epoch_{epoch:03d}.pt'
+    checkpoint_path = checkpoints_dir / f'checkpoint_epoch_{epoch:g}.pt'
     torch.save(
         {
             'epoch': epoch,
@@ -546,7 +562,7 @@ def save_network_source(
     return model_source_dir
 
 
-def load_latest_checkpoint(run_dir: Path, network: Network) -> int:
+def load_latest_checkpoint(run_dir: Path, network: Network) -> float:
     """Restore the latest complete epoch, or return zero if none exists."""
     checkpoints = sorted((run_dir / 'checkpoints').glob('checkpoint_epoch_*.pt'))
     if not checkpoints:
@@ -562,7 +578,7 @@ def load_latest_checkpoint(run_dir: Path, network: Network) -> int:
     )
     network.params = checkpoint['network_params']
     network.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    return int(checkpoint['epoch'])
+    return float(checkpoint['epoch'])
 
 
 def print_dataset_stats(name: str, stats: DatasetStats) -> None:
@@ -653,7 +669,7 @@ def train(args: argparse.Namespace) -> Path:
 
     first_epoch = 1
     if args.resume:
-        first_epoch = load_latest_checkpoint(run_dir, network) + 1
+        first_epoch = int(load_latest_checkpoint(run_dir, network)) + 1
     if first_epoch > args.epochs:
         model_source_dir = save_network_source(run_dir, network, args.model)
         print(
@@ -674,6 +690,7 @@ def train(args: argparse.Namespace) -> Path:
                 frequent_validation_loader,
                 len(train_examples),
                 len(frequent_validation_examples),
+                run_dir,
                 args,
                 epoch,
                 logger,
@@ -735,6 +752,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('--model', type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument('--epochs', type=positive_int, required=True)
+    parser.add_argument(
+        '--checkpoints-per-epoch',
+        type=positive_int,
+        default=1,
+    )
     parser.add_argument('--num-pairs', type=positive_int)
     parser.add_argument('--num-validation-pairs', type=positive_int)
     parser.add_argument('--batch-size', type=positive_int, default=8)
