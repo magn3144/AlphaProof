@@ -1,6 +1,7 @@
 .DS_store
 /data/
 __pycache__/
+*.egg-info/
 .venv/
 models/
 .env

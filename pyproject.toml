@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "alphaproof"
 version = "0.1.0"
@@ -42,3 +46,7 @@ causal-conv1d = [
     "ninja",
     "wheel",
 ]
+
+[tool.setuptools.packages.find]
+include = ["alphaproof*"]
+namespaces = true

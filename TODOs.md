@@ -4,6 +4,7 @@
 - [ ] Make rollout agents run in parallel.
 - [X] CLI for training.
 - [X] CLI for inference.
+- [ ] Fix discrepancies between implementation and original AlphaProof paper.
 
 ## Data cleaning / formalization
 - [X] Fix errors in data cleaning script.
