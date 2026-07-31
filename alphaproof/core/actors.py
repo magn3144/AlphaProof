@@ -158,6 +158,7 @@ def run_mcts(
         game: Game,
         network: Network,
         environment: Environment,
+        stop_on_solution: bool = True,
 ):
     """Run MCTS simulations from the game root."""
     root = game.root
@@ -166,6 +167,14 @@ def run_mcts(
         search_path = [node]
 
         while node.expanded() and not progressive_sample(node, config):
+            if (
+                    not stop_on_solution
+                    and all(
+                        child.is_terminal
+                        for child in node.children.values()
+                    )
+            ):
+                break
             _, node = select_child(config, node)
             search_path.append(node)
 
@@ -197,7 +206,7 @@ def run_mcts(
                 network_sample_output.value,
                 config,
         )
-        if root.is_optimal:
+        if root.is_optimal and stop_on_solution:
             break
 
 
@@ -210,9 +219,13 @@ def progressive_sample(node: Node, config: Config) -> bool:
 
 
 def select_child(config: Config, node: Node) -> tuple[Action, Node]:
-    """Selects the child with the highest UCB score."""
+    """Selects the non-terminal child with the highest UCB score."""
     action, child = max(
-            node.children.items(),
+            (
+                (action, child)
+                for action, child in node.children.items()
+                if not child.is_terminal
+            ),
             key=lambda item: ucb_score(config, node, item[1]),
     )
     return action, child

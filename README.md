@@ -124,17 +124,27 @@ To continue a stopped run instead of creating a fresh one:
 
 ## Inference
 
-Run inference from either an SFT run or an RL run:
+Inference reads one JSONL record per theorem:
+
+```json
+{"request_id":"example","theorem":"theorem example : True := by sorry","seed":0}
+```
+
+Run the batch from either an SFT or RL checkpoint:
 
 ```bash
 python -m alphaproof.inference.infer \
-  --theorem 'theorem alphaproof_example : True := by sorry' \
-  --num-simulations 16
+  --input requests.jsonl \
+  --output results.jsonl \
+  --num-simulations 250 \
+  --no-stop-on-solution
 ```
 
-Use `--theorem-file theorem.lean` instead of `--theorem` to read the theorem
-from a file. The command prints a complete Lean declaration when it finds and
-verifies a proof, and exits with status 1 when no verified proof is found.
+The network is loaded once and each input theorem receives one tree search.
+Each output record contains the status, tactic proof, duration, and complete
+AND-OR search tree. A single theorem is represented by a one-record input file.
+By default inference stops when it finds a proof; `--no-stop-on-solution` runs
+the complete simulation budget.
 
 ## Interactive environment
 

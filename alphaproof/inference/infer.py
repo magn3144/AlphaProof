@@ -1,18 +1,20 @@
 import argparse
 import json
 import random
-import sys
 from pathlib import Path
+from time import perf_counter
 from typing import Any, cast
 
 import torch
 
 from alphaproof.core.actors import run_mcts
 from alphaproof.core.config import Config
-from alphaproof.core.environment import NodeType
+from alphaproof.core.environment import Environment, NodeType
 from alphaproof.core.game import Game, Node, extract_proof_script, final_check
-from alphaproof.core.helper import replace_sorry_proof, theorem_for_game
 from alphaproof.core.network import Network, Params
+from alphaproof.core.paths import LEAN_PROJECT_DIR
+from alphaproof.inference.search_tree import serialize_search_tree
+from leantree import LeanProject
 
 
 def load_run_config(run_dir: Path) -> dict[str, Any]:
@@ -93,6 +95,7 @@ def prove(
     config: Config,
     network: Network,
     disprove: bool = False,
+    stop_on_solution: bool = True,
 ) -> Game:
     """Search for and verify a proof of one theorem."""
     game = Game(theorem, disprove, config.num_simulations)
@@ -110,32 +113,33 @@ def prove(
             is_optimal=state.terminal,
             is_terminal=state.terminal,
         )
-        run_mcts(config, game, network, environment)
+        run_mcts(
+            config,
+            game,
+            network,
+            environment,
+            stop_on_solution=stop_on_solution,
+        )
 
     if game.root.is_optimal:
         game.root.is_optimal = final_check(game, config.final_check_timeout)
     return game
 
 
-def read_theorem(args: argparse.Namespace) -> str:
-    """Read the requested theorem from the command line or a file."""
-    if args.theorem is not None:
-        theorem = args.theorem.strip()
-    else:
-        if args.theorem_file is None:
-            raise ValueError('A theorem or theorem file is required.')
-        theorem = args.theorem_file.read_text(encoding='utf-8').strip()
-    if theorem.count('sorry') != 1:
-        raise ValueError('The theorem must contain exactly one `sorry`.')
-    return theorem
+def theorem_text(record: dict[str, Any]) -> str:
+    """Combine an optional Lean header with a theorem request."""
+    header = str(record.get('header') or '')
+    return f'{header}\n{record["theorem"]}' if header else str(record['theorem'])
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse inference command-line arguments."""
+    """Parse paths and shared settings for JSONL inference."""
     default_run_dir = Config().sft_run_dir
     parser = argparse.ArgumentParser(
-        description='Search for a verified Lean proof with AlphaProof.'
+        description='Search for verified Lean proofs from a JSONL batch.'
     )
+    parser.add_argument('--input', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
     parser.add_argument(
         '--run-dir',
         type=Path,
@@ -145,24 +149,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f'(default: {default_run_dir}).'
         ),
     )
-    theorem_source = parser.add_mutually_exclusive_group(required=True)
-    theorem_source.add_argument('--theorem', help='Lean theorem containing `sorry`.')
-    theorem_source.add_argument('--theorem-file', type=Path)
+    parser.add_argument('--lean-project', type=Path, default=LEAN_PROJECT_DIR)
+    parser.add_argument('--import', dest='imports', action='append')
     parser.add_argument('--num-simulations', type=int, default=16)
     parser.add_argument('--num-sampled-actions', type=int, default=4)
     parser.add_argument('--tactic-timeout', type=float, default=1.0)
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--disprove', action='store_true')
+    parser.add_argument(
+        '--stop-on-solution',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     args = parser.parse_args(argv)
 
+    if not args.input.is_file():
+        parser.error(f'Input does not exist: {args.input}')
     if not args.run_dir.is_dir():
         parser.error(f'Run does not exist: {args.run_dir}')
     has_sft_params = (args.run_dir / 'network_params.pt').is_file()
     has_rl_params = any((args.run_dir / 'checkpoints').glob('step_*.pt'))
     if not has_sft_params and not has_rl_params:
         parser.error(f'Run contains no network parameters: {args.run_dir}')
-    if args.theorem_file is not None and not args.theorem_file.is_file():
-        parser.error(f'Theorem file does not exist: {args.theorem_file}')
+    if not args.lean_project.is_dir():
+        parser.error(f'Lean project does not exist: {args.lean_project}')
     if args.num_simulations < 1:
         parser.error('--num-simulations must be positive')
     if args.num_sampled_actions < 1:
@@ -173,32 +181,52 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run AlphaProof inference for one theorem."""
+    """Load one network and run one tree search per JSONL request."""
     args = parse_args()
-    try:
-        theorem = read_theorem(args)
-    except ValueError as exc:
-        print(f'error: {exc}', file=sys.stderr)
-        raise SystemExit(2) from exc
-
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
     config = make_config(args)
+    imports = tuple(args.imports or ('Mathlib',))
+    config.environment_ctor = lambda: Environment(
+        LeanProject(str(args.lean_project)),
+        imports=imports,
+    )
     network = Network(config)
     load_network_checkpoint(args.run_dir, network)
     network.num_sampled_actions = args.num_sampled_actions
 
-    game = prove(theorem, config, network, disprove=args.disprove)
-    if not game.root.is_optimal:
-        print('No verified proof found.', file=sys.stderr)
-        raise SystemExit(1)
-
-    proof_lines = extract_proof_script(game.root)
-    declaration = replace_sorry_proof(
-        theorem_for_game(theorem, args.disprove),
-        proof_lines,
-    )
-    print(f'import Mathlib\n\n{declaration}')
+    with (
+        args.input.open(encoding='utf-8') as input_file,
+        args.output.open('w', encoding='utf-8') as output_file,
+    ):
+        for line in input_file:
+            record = json.loads(line)
+            seed = int(record['seed'])
+            random.seed(seed)
+            torch.manual_seed(seed)
+            started = perf_counter()
+            game = prove(
+                theorem_text(record),
+                config,
+                network,
+                stop_on_solution=args.stop_on_solution,
+            )
+            proof_lines = (
+                extract_proof_script(game.root)
+                if game.root.is_optimal
+                else None
+            )
+            result = {
+                'request_id': record['request_id'],
+                'status': 'proved' if proof_lines is not None else 'failed',
+                'proof': (
+                    '\n'.join(proof_lines)
+                    if proof_lines is not None
+                    else None
+                ),
+                'duration_seconds': perf_counter() - started,
+                'tree': serialize_search_tree(game.root),
+            }
+            output_file.write(json.dumps(result) + '\n')
+            output_file.flush()
 
 
 if __name__ == '__main__':
