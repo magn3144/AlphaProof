@@ -22,13 +22,16 @@ def theorem_for_game(theorem: str, disprove: bool) -> str:
 
 
 def negate_theorem(theorem: str) -> str:
-    """Create a theorem whose goal is the negation of the original goal."""
+    """Create a theorem negating the fully quantified original statement."""
     before_proof, proof = _split_sorry_proof(theorem)
+    declaration = _find_declaration(before_proof)
     goal_start = _find_goal_colon(before_proof)
-    header = before_proof[:goal_start + 1]
+    header = _rename_decl(before_proof[:declaration.end()], '_disproof')
+    binders = before_proof[declaration.end():goal_start].strip()
     goal = before_proof[goal_start + 1:].strip()
-    header = _rename_decl(header, '_disproof')
-    return f'{header} ¬ ({goal}) {proof}'
+    if binders:
+        goal = f'∀ {binders}, {goal}'
+    return f'{header} : ¬ ({goal}) {proof}'
 
 
 def replace_goal_with_false(theorem: str) -> str:

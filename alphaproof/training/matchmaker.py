@@ -37,21 +37,21 @@ class Matchmaker:
             disproved = any(
                     disprove and success for (disprove, success) in self.attempts
             )
-            proved = any(
-                    (not disprove) and success for (disprove, success) in self.attempts
-            )
             if disproved:
                 return 0.0
             elif len(self.attempts) < config.mm_trust_count:
                 return 1.0
-            elif not disproved and not proved:
-                # Never managed to prove or disprove.
+            proved_count = config.mm_fully_decided_trust_count
+            latest = self.attempts[-proved_count:]
+            if len(latest) == proved_count and all(
+                    (not disprove) and success
+                    for disprove, success in latest
+            ):
+                return config.mm_proved_weight
+
+            latest = self.attempts[-config.mm_trust_count:]
+            if all(not success for _, success in latest):
                 return config.mm_undecided_weight
-            else:
-                latest = self.attempts[-config.mm_fully_decided_trust_count :]
-                if all((not disprove) and success for (disprove, success) in latest):
-                    # Consistently proved.
-                    return config.mm_proved_weight
             return 1.0
 
     def __init__(self, config: Config):

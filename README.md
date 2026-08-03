@@ -151,8 +151,8 @@ the complete simulation budget.
 Start the backend with the model used by the Agent tab:
 
 ```bash
-python -m alphaproof.inference.interactive_env \
-  --num-simulations 800 \
+.venv/bin/python -m alphaproof.inference.interactive_env \
+  --num-simulations 64 \
   --num-sampled-actions 3
 ```
 

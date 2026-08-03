@@ -1,7 +1,7 @@
 import asyncio
 import enum
 import typing
-from typing import Any, Callable, List, Dict
+from typing import Any, Callable, Dict, List, TypeAlias
 
 from alphaproof.core.helper import negate_theorem
 from leantree import LeanProject, LeanTactic, LeanProofState
@@ -9,13 +9,13 @@ from leantree.utils import to_sync
 
 
 # Observations in AlphaProof are the tactic state.
-Observation = LeanProofState
+Observation: TypeAlias = LeanProofState
 
 # Actions in AlphaProof are Lean tactics (except for special actions, to start a
 # disproof, or to focus on a goal).
-Action = LeanTactic | str
+Action: TypeAlias = LeanTactic | str
 
-Theorem = str
+Theorem: TypeAlias = str
 
 TACTIC_TIMEOUT_GRACE = 6.0
 

@@ -48,6 +48,7 @@ class Node:
         self.visit_count: int = 0
         self.evaluations: int = 0
         self.value_sum: float = 0.0
+        self.network_value: float | None = None
         self.children: dict[Action, Node] = {}
 
         # Not used in search, but used as a regression target in RL.

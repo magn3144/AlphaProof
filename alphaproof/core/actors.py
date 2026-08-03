@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import math
 from collections.abc import Callable
 from time import perf_counter
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from alphaproof.core.config import Config
 from alphaproof.core.environment import (
     Action,
     Environment,
     NodeType,
+    Observation,
     TacticDeadlineExceeded,
 )
 from alphaproof.core.game import (
@@ -19,11 +22,13 @@ from alphaproof.core.game import (
     final_check,
 )
 from alphaproof.core.timing import GameTimings
-from alphaproof.training.matchmaker import Matchmaker
 from alphaproof.core.network import Network
-from alphaproof.training.replay_buffer import ReplayBuffer
-from alphaproof.training.shared_storage import SharedStorage
 from leantree.repl_adapter.interaction import LeanInteractionException
+
+if TYPE_CHECKING:
+    from alphaproof.training.matchmaker import Matchmaker
+    from alphaproof.training.replay_buffer import ReplayBuffer
+    from alphaproof.training.shared_storage import SharedStorage
 
 
 # Each acting job is independent of all others; it takes the latest network
@@ -181,6 +186,7 @@ def run_mcts(
         assert node.observation is not None
         generation_start = perf_counter()
         network_sample_output = network.sample(str(node.observation))
+        node.network_value = network_sample_output.value
         game.timings.add_tactic_generation(
             simulation=i + 1,
             state_id=node.state_id,
@@ -247,8 +253,11 @@ def ucb_score(config: Config, parent: Node, child: Node) -> float:
     prior_score = pb_c * child.prior / parent.prior_sum()
     if child.visit_count > 0:
         value = child.reward + child.value()
+    elif parent.node_type == NodeType.AND:
+        value = -config.unvisited_value_penalty
     else:
-        value = parent.value() - config.unvisited_value_penalty
+        assert parent.network_value is not None
+        value = parent.network_value - config.unvisited_value_penalty
     value_score = config.value_discount ** (- 1 - value)
 
     if parent.node_type == NodeType.AND:
@@ -258,6 +267,17 @@ def ucb_score(config: Config, parent: Node, child: Node) -> float:
             # Avoid re-selecting proven subgoals.
             value_score = -1e9
     return prior_score + value_score
+
+
+def find_equivalent_child(
+        node: Node,
+        observation: Observation,
+) -> Node | None:
+    """Return an existing OR child with the same Lean state."""
+    for child in node.children.values():
+        if child.observation.semantic_equals(observation):
+            return child
+    return None
 
 
 # We expand a node using the value and sampled actions obtained from
@@ -302,6 +322,14 @@ def expand_node(
             # Invalid action encountered.
             continue
         else:
+            if node.node_type == NodeType.OR:
+                equivalent_child = find_equivalent_child(
+                        node,
+                        state.observation,
+                )
+                if equivalent_child is not None:
+                    equivalent_child.prior += p
+                    continue
             node.children[action] = Node(
                     observation=state.observation,
                     action=action,
@@ -330,13 +358,15 @@ def expand_node(
                 )
 
 
-def backprop_value_towards_min(node):
+def backprop_value_towards_min(node: Node) -> float:
     """Computes the value for an AND node by propagating the min value from children."""
-    value = 1
-    for child in node.children.values():
-        if not child.is_optimal and child.visit_count > 0:
-            value = min(value, child.value())
-    return value
+    values = [
+            0.0 if child.is_optimal else child.value()
+            for child in node.children.values()
+            if child.is_optimal or child.visit_count > 0
+    ]
+    assert values
+    return min(values)
 
 
 # At the end of a simulation, we propagate the evaluation all the way up the

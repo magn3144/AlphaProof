@@ -50,3 +50,7 @@ causal-conv1d = [
 [tool.setuptools.packages.find]
 include = ["alphaproof*"]
 namespaces = true
+
+[tool.pyright]
+pythonVersion = "3.13"
+extraPaths = ["vendor/leantree"]
