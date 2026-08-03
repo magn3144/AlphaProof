@@ -11,10 +11,10 @@
       "console": "integratedTerminal",
       "justMyCode": true,
       "args": [
-        "rl_mac_smoke",
+        "rl_local_debug_01",
         "--debug",
-        "--dataset-path",
-        "data/dataset/test_theorems.jsonl",
+        "--dataset-dir",
+        "data/dataset/codex_theorems",
         "--disprove-rate",
         "0",
         "--num-games",
