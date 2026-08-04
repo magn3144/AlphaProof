@@ -1,10 +1,10 @@
 ## AlphaProof implementation
-- [ ] Benchmark execution times of different tasks in the code to optimize training code.
+- [X] Benchmark execution times of different tasks in the code.
 - [ ] Make run_actor and everything downstream pure functions.
 - [ ] Make rollout agents run in parallel.
 - [X] CLI for training.
 - [X] CLI for inference.
-- [ ] Fix discrepancies between implementation and original AlphaProof paper.
+- [X] Fix discrepancies between implementation and original AlphaProof paper.
 
 ## Data cleaning / formalization
 - [X] Fix errors in data cleaning script.
@@ -31,8 +31,3 @@
 
 ## Develop difficulty metric
 - [X] Read STP paper again
-
-## Implement co-evolutionary training
-- [ ] Adapt STP code to work on GPUs.
-- [ ] Run STP for a few epochs.
-- [ ] Develop AlphaProof difficulty metric and see how it correlates with STP difficulty metric.

@@ -187,12 +187,19 @@ def run_mcts(
         generation_start = perf_counter()
         network_sample_output = network.sample(str(node.observation))
         node.network_value = network_sample_output.value
+        generation_seconds = perf_counter() - generation_start
+        num_tactics = len(network_sample_output.action_logprobs)
         game.timings.add_tactic_generation(
             simulation=i + 1,
             state_id=node.state_id,
-            seconds=perf_counter() - generation_start,
-            num_tactics=len(network_sample_output.action_logprobs),
+            seconds=generation_seconds,
+            num_tactics=num_tactics,
         )
+        if node.expansion is None:
+            node.expansion = len(game.timings.tactic_generations)
+            node.simulation = i + 1
+            node.expansion_seconds = generation_seconds
+            node.num_tactics = num_tactics
         if config.debug:
             actions = '\n'.join(
                     f'  {action}'

@@ -50,6 +50,10 @@ class Node:
         self.value_sum: float = 0.0
         self.network_value: float | None = None
         self.children: dict[Action, Node] = {}
+        self.expansion: int | None = None
+        self.simulation: int | None = None
+        self.expansion_seconds: float | None = None
+        self.num_tactics: int | None = None
 
         # Not used in search, but used as a regression target in RL.
         self.value_target: float = 0.0
