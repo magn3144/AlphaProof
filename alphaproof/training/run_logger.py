@@ -1,6 +1,7 @@
 import argparse
 import json
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import wandb
 
 from alphaproof.core.config import Config
 from alphaproof.core.game import Game
+from alphaproof.inference.parallel import InferenceBatchStats
 from alphaproof.training.run_config import serializable_config
 from alphaproof.training.run_diagnostics import RunDiagnostics
 
@@ -183,10 +185,31 @@ class RunLogger:
             message += f', replay validation loss {validation_loss:.4f}'
         print(message, flush=True)
 
+    def log_inference(self, stats: InferenceBatchStats) -> None:
+        """Log aggregate GPU inference batching measurements."""
+        average_queue_wait = (
+            stats.queue_wait_seconds / stats.request_count
+            if stats.request_count
+            else 0.0
+        )
+        self.wandb_run.log({
+            'actor/game': self.games_completed,
+            'actor/inference_batches': stats.batch_count,
+            'actor/inference_average_batch_size': stats.average_batch_size,
+            'actor/inference_average_queue_wait_seconds': average_queue_wait,
+            'actor/inference_model_seconds': stats.model_seconds,
+        })
+        print(
+            f'Inference: {stats.batch_count} batches, average size '
+            f'{stats.average_batch_size:.2f}, model time '
+            f'{stats.model_seconds:.1f}s.',
+            flush=True,
+        )
+
     def log_validation(
         self,
         game: int,
-        games: list[Game | None],
+        games: Sequence[Game | None],
     ) -> None:
         """Persist and log one fixed-theorem validation pass."""
         solved_games = [

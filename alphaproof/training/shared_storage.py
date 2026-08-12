@@ -14,17 +14,6 @@ class SharedStorage:
         """Initialize storage under one training run."""
         self.checkpoints_dir = run_dir / 'checkpoints'
         self.checkpoints_dir.mkdir(exist_ok=True)
-        self._params: Params | None = None
-
-    def latest_params(self) -> Params:
-        """Return the most recent network parameters."""
-        if self._params is None:
-            raise ValueError('Shared storage has no network parameters.')
-        return self._params
-
-    def publish_params(self, params: Params) -> None:
-        """Publish network parameters for actors."""
-        self._params = params
 
     def save_checkpoint(self, step: int, network: Network) -> Path:
         """Atomically save learner and optimizer state."""
@@ -64,7 +53,6 @@ class SharedStorage:
         checkpoint = typing.cast(dict[str, typing.Any], checkpoint)
         network.params = typing.cast(Params, checkpoint['network_params'])
         network.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.publish_params(network.params)
         random.setstate(checkpoint['python_random_state'])
         torch.set_rng_state(checkpoint['torch_random_state'].cpu())
         if torch.cuda.is_available():

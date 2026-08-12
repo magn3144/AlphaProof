@@ -127,7 +127,7 @@ To continue a stopped run instead of creating a fresh one:
 Inference reads one JSONL record per theorem:
 
 ```json
-{"request_id":"example","theorem":"theorem example : True := by sorry","seed":0}
+{"request_id":"example","theorem":"theorem example : True := by sorry"}
 ```
 
 Run the batch from either an SFT or RL checkpoint:
@@ -137,10 +137,15 @@ python -m alphaproof.inference.infer \
   --input requests.jsonl \
   --output results.jsonl \
   --num-simulations 250 \
+  --parallel-searches 4 \
+  --inference-batch-size 4 \
+  --seed 0 \
   --no-stop-on-solution
 ```
 
-The network is loaded once and each input theorem receives one tree search.
+The network is loaded once and input theorems are searched concurrently. Leaf
+evaluations from the active searches are batched on the GPU. Repeating a theorem
+in the input creates independent searches for that theorem.
 Each output record contains the status, tactic proof, duration, and complete
 AND-OR search tree. A single theorem is represented by a one-record input file.
 By default inference stops when it finds a proof; `--no-stop-on-solution` runs

@@ -175,7 +175,7 @@ class Environment:
         self,
         state_id: int,
         action: Action,
-        tactic_timeout: float = 1.0,
+        tactic_timeout: float,
     ) -> State:
         """Applies the action in the given state, returns the new state."""
         if state_id not in self._branches:

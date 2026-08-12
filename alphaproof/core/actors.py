@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from time import perf_counter
-from typing import TYPE_CHECKING, Dict, List
+from typing import Dict, List, Protocol
 
 from alphaproof.core.config import Config
 from alphaproof.core.environment import (
@@ -22,50 +21,16 @@ from alphaproof.core.game import (
     final_check,
 )
 from alphaproof.core.timing import GameTimings
-from alphaproof.core.network import Network
+from alphaproof.core.network import NetworkSamplingOutput
 from leantree.repl_adapter.interaction import LeanInteractionException
 
-if TYPE_CHECKING:
-    from alphaproof.training.matchmaker import Matchmaker
-    from alphaproof.training.replay_buffer import ReplayBuffer
-    from alphaproof.training.shared_storage import SharedStorage
 
+class TacticSampler(Protocol):
+    """Network interface required by MCTS."""
 
-# Each acting job is independent of all others; it takes the latest network
-# snapshot, produces a game and makes it available to the learner by
-# writing it to a shared replay buffer.
-def run_actor(
-        config: Config,
-        storage: SharedStorage,
-        replay_buffer: ReplayBuffer,
-        matchmaker: Matchmaker,
-        num_games: int,
-        on_game: Callable[[Game], None] | None = None,
-        on_game_start: Callable[[Game], None] | None = None,
-):
-    """Generate solved games from the latest checkpoint."""
-    network = Network(config)
-    games_completed = 0
-    with ProofVerifier(config.final_check_timeout) as verifier:
-        while games_completed < num_games:
-            network.params = storage.latest_params()
-            game_start = perf_counter()
-            game = play_game(
-                config,
-                network,
-                matchmaker,
-                verifier,
-                on_game_start,
-            )
-            if game is None:
-                continue
-            game.timings.total_seconds = perf_counter() - game_start
-            if game.root.is_optimal:
-                replay_buffer.save_game(game)
-            matchmaker.send_game(game)
-            games_completed += 1
-            if on_game is not None:
-                on_game(game)
+    def sample(self, observation: str) -> NetworkSamplingOutput:
+        """Return sampled tactics and a value estimate."""
+        ...
 
 
 # Each game is produced by starting from the initial Lean state, and executing
@@ -74,36 +39,29 @@ def run_actor(
 # to a replay buffer for training.
 def play_game(
         config: Config,
-        network: Network,
-        matchmaker: Matchmaker,
+        game: Game,
+        network: TacticSampler,
         verifier: ProofVerifier,
-        on_game_start: Callable[[Game], None] | None = None,
-) -> Game | None:
-    """Run one theorem episode and validate any discovered proof."""
-    game = matchmaker.get_start_position()
-    if on_game_start is not None:
-        on_game_start(game)
+        stop_on_solution: bool = True,
+) -> bool:
+    """Run one theorem episode and return whether Lean rejected its objective."""
     setup_start = perf_counter()
     with config.environment_ctor() as environment:
         try:
             state = environment.initial_state(game.theorem)
         except LeanInteractionException as error:
-            matchmaker.reject_theorem(game.theorem)
-            print(
-                f'Rejected theorem that Lean could not initialize: {error}',
-                flush=True,
-            )
-            return None
+            game.error = str(error)
+            return True
         if game.disprove:
             try:
-                state = environment.step(state.id, 'disprove')
-            except (LeanInteractionException, ValueError) as error:
-                matchmaker.reject_theorem(game.theorem)
-                print(
-                    f'Rejected theorem that could not be negated: {error}',
-                    flush=True,
+                state = environment.step(
+                    state.id,
+                    'disprove',
+                    config.tactic_timeout,
                 )
-                return None
+            except (LeanInteractionException, ValueError) as error:
+                game.error = str(error)
+                return True
         game.timings.setup_seconds = perf_counter() - setup_start
         game.root = Node(
                 action=None,
@@ -129,10 +87,16 @@ def play_game(
 
         # Run Monte Carlo tree search to find a proof.
         try:
-            run_mcts(config, game, network, environment)
+            run_mcts(
+                config,
+                game,
+                network,
+                environment,
+                stop_on_solution=stop_on_solution,
+            )
         except TacticDeadlineExceeded as error:
             game.error = str(error)
-            return game
+            return False
 
     if game.root.is_optimal:
         # Perform final check to ensure the proof is valid.
@@ -151,7 +115,7 @@ def play_game(
             # Compute value targets for the proof.
             compute_value_target(game.root)
 
-    return game
+    return False
 
 
 # Core Monte Carlo tree search algorithm.
@@ -161,7 +125,7 @@ def play_game(
 def run_mcts(
         config: Config,
         game: Game,
-        network: Network,
+        network: TacticSampler,
         environment: Environment,
         stop_on_solution: bool = True,
 ):

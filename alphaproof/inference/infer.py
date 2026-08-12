@@ -1,19 +1,18 @@
 import argparse
 import json
-import random
 from pathlib import Path
-from time import perf_counter
 from typing import Any, cast
 
 import torch
 
-from alphaproof.core.actors import run_mcts
 from alphaproof.core.config import Config
-from alphaproof.core.environment import Environment, NodeType
-from alphaproof.core.game import Game, Node, extract_proof_script, final_check
+from alphaproof.core.environment import Environment
+from alphaproof.core.game import extract_proof_script
 from alphaproof.core.network import Network, Params
 from alphaproof.core.paths import LEAN_PROJECT_DIR
+from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
 from alphaproof.inference.search_tree import serialize_search_tree
+from alphaproof.training.randomness import seed_everything
 from leantree import LeanProject
 
 
@@ -28,6 +27,7 @@ def load_run_config(run_dir: Path) -> dict[str, Any]:
 
 def make_config(args: argparse.Namespace) -> Config:
     """Build search configuration for an SFT or RL run."""
+    defaults = Config()
     run_data = load_run_config(args.run_dir)
     saved_config = run_data.get('config', {})
     if saved_config:
@@ -40,18 +40,25 @@ def make_config(args: argparse.Namespace) -> Config:
     config = Config(
         num_simulations=args.num_simulations,
         batch_size=1,
-        num_actors=1,
+        num_actors=args.parallel_searches,
         num_games=1,
+        inference_batch_size=args.inference_batch_size,
+        inference_batch_timeout=args.inference_batch_timeout,
+        num_sampled_actions=args.num_sampled_actions,
+        tactic_timeout=args.tactic_timeout,
+        seed=args.seed,
         lr=learning_rate,
         sft_run_dir=model_run_dir,
         max_state_length=int(
             saved_config.get(
-                'max_state_length', run_data.get('max_state_length', 640)
+                'max_state_length',
+                run_data.get('max_state_length', defaults.max_state_length),
             )
         ),
         max_action_length=int(
             saved_config.get(
-                'max_action_length', run_data.get('max_action_length', 128)
+                'max_action_length',
+                run_data.get('max_action_length', defaults.max_action_length),
             )
         ),
     )
@@ -67,7 +74,6 @@ def make_config(args: argparse.Namespace) -> Config:
     ):
         if name in saved_config:
             setattr(config, name, saved_config[name])
-    config.tactic_timeout = args.tactic_timeout
     return config
 
 
@@ -90,42 +96,6 @@ def load_network_checkpoint(run_dir: Path, network: Network) -> Path:
     return checkpoint_path
 
 
-def prove(
-    theorem: str,
-    config: Config,
-    network: Network,
-    disprove: bool = False,
-    stop_on_solution: bool = True,
-) -> Game:
-    """Search for and verify a proof of one theorem."""
-    game = Game(theorem, disprove, config.num_simulations)
-    with config.environment_ctor() as environment:
-        state = environment.initial_state(theorem)
-        if disprove:
-            state = environment.step(state.id, 'disprove')
-        game.root = Node(
-            action=None,
-            observation=state.observation,
-            prior=1.0,
-            state_id=state.id,
-            node_type=NodeType.OR,
-            reward=state.reward,
-            is_optimal=state.terminal,
-            is_terminal=state.terminal,
-        )
-        run_mcts(
-            config,
-            game,
-            network,
-            environment,
-            stop_on_solution=stop_on_solution,
-        )
-
-    if game.root.is_optimal:
-        game.root.is_optimal = final_check(game, config.final_check_timeout)
-    return game
-
-
 def theorem_text(record: dict[str, Any]) -> str:
     """Combine an optional Lean header with a theorem request."""
     header = str(record.get('header') or '')
@@ -134,7 +104,8 @@ def theorem_text(record: dict[str, Any]) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse paths and shared settings for JSONL inference."""
-    default_run_dir = Config().sft_run_dir
+    defaults = Config()
+    default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description='Search for verified Lean proofs from a JSONL batch.'
     )
@@ -151,9 +122,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--lean-project', type=Path, default=LEAN_PROJECT_DIR)
     parser.add_argument('--import', dest='imports', action='append')
-    parser.add_argument('--num-simulations', type=int, default=16)
-    parser.add_argument('--num-sampled-actions', type=int, default=4)
-    parser.add_argument('--tactic-timeout', type=float, default=1.0)
+    parser.add_argument(
+        '--num-simulations', type=int, default=defaults.num_simulations
+    )
+    parser.add_argument(
+        '--num-sampled-actions', type=int, default=defaults.num_sampled_actions
+    )
+    parser.add_argument(
+        '--tactic-timeout', type=float, default=defaults.tactic_timeout
+    )
+    parser.add_argument(
+        '--parallel-searches', type=int, default=defaults.num_actors
+    )
+    parser.add_argument(
+        '--inference-batch-size',
+        type=int,
+        default=defaults.inference_batch_size,
+    )
+    parser.add_argument(
+        '--inference-batch-timeout',
+        type=float,
+        default=defaults.inference_batch_timeout,
+    )
+    parser.add_argument('--seed', type=int, default=defaults.seed)
     parser.add_argument(
         '--stop-on-solution',
         action=argparse.BooleanOptionalAction,
@@ -177,12 +168,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error('--num-sampled-actions must be positive')
     if args.tactic_timeout <= 0:
         parser.error('--tactic-timeout must be positive')
+    if args.parallel_searches < 1:
+        parser.error('--parallel-searches must be positive')
+    if args.inference_batch_size < 1:
+        parser.error('--inference-batch-size must be positive')
+    if args.inference_batch_timeout < 0:
+        parser.error('--inference-batch-timeout cannot be negative')
     return args
 
 
 def main() -> None:
-    """Load one network and run one tree search per JSONL request."""
+    """Load one network and search a JSONL request batch in parallel."""
     args = parse_args()
+    seed_everything(args.seed)
     config = make_config(args)
     imports = tuple(args.imports or ('Mathlib',))
     config.environment_ctor = lambda: Environment(
@@ -191,39 +189,56 @@ def main() -> None:
     )
     network = Network(config)
     load_network_checkpoint(args.run_dir, network)
-    network.num_sampled_actions = args.num_sampled_actions
 
-    with (
-        args.input.open(encoding='utf-8') as input_file,
-        args.output.open('w', encoding='utf-8') as output_file,
-    ):
-        for line in input_file:
-            record = json.loads(line)
-            seed = int(record['seed'])
-            random.seed(seed)
-            torch.manual_seed(seed)
-            started = perf_counter()
-            game = prove(
-                theorem_text(record),
-                config,
-                network,
-                stop_on_solution=args.stop_on_solution,
-            )
+    with args.input.open(encoding='utf-8') as input_file:
+        records = [json.loads(line) for line in input_file if line.strip()]
+    requests = [
+        SearchRequest(
+            request_id=str(record['request_id']),
+            theorem=theorem_text(record),
+            disprove=bool(record.get('disprove', False)),
+            num_simulations=args.num_simulations,
+            stop_on_solution=args.stop_on_solution,
+        )
+        for record in records
+    ]
+    with ParallelSearchEngine(config, network) as engine:
+        search_results = engine.search(requests)
+        inference_stats = engine.inference_stats
+
+    print(
+        f'Inference: {inference_stats.batch_count} batches, average size '
+        f'{inference_stats.average_batch_size:.2f}, model time '
+        f'{inference_stats.model_seconds:.1f}s.',
+        flush=True,
+    )
+
+    with args.output.open('w', encoding='utf-8') as output_file:
+        for search_result in search_results:
+            game = search_result.game
             proof_lines = (
                 extract_proof_script(game.root)
                 if game.root.is_optimal
                 else None
             )
+            status = 'rejected' if search_result.rejected else (
+                'proved' if proof_lines is not None else 'failed'
+            )
             result = {
-                'request_id': record['request_id'],
-                'status': 'proved' if proof_lines is not None else 'failed',
+                'request_id': search_result.request.request_id,
+                'status': status,
                 'proof': (
                     '\n'.join(proof_lines)
                     if proof_lines is not None
                     else None
                 ),
-                'duration_seconds': perf_counter() - started,
-                'tree': serialize_search_tree(game.root),
+                'error': game.error,
+                'duration_seconds': search_result.duration_seconds,
+                'tree': (
+                    None
+                    if search_result.rejected
+                    else serialize_search_tree(game.root)
+                ),
             }
             output_file.write(json.dumps(result) + '\n')
             output_file.flush()

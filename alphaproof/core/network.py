@@ -188,9 +188,19 @@ class Network(nn.Module):
 
     def sample(self, observation: str) -> NetworkSamplingOutput:
         """Return sampled tactics and a value estimate for search."""
+        return self.sample_batch([observation])[0]
+
+    def sample_batch(
+        self,
+        observations: list[str],
+    ) -> list[NetworkSamplingOutput]:
+        """Return sampled tactics and value estimates for a state batch."""
+        if not observations:
+            return []
+
         self.eval()
         encoded = self.tokenizer(
-            observation,
+            observations,
             max_length=self.max_state_length,
             padding='max_length',
             truncation=True,
@@ -211,7 +221,7 @@ class Network(nn.Module):
             )
             value_logits = self.value_head(pooled_state)
             value_probs = torch.softmax(value_logits, dim=-1)
-            value = (value_probs * self.value_bins).sum(dim=-1).item()
+            values = (value_probs * self.value_bins).sum(dim=-1).tolist()
 
             generation_model = typing.cast(typing.Any, self.model)
             generated = generation_model.generate(
@@ -244,21 +254,29 @@ class Network(nn.Module):
                 .tolist()
             )
 
-        actions = self.tokenizer.batch_decode(
+        generated_actions = self.tokenizer.batch_decode(
             generated.sequences,
             skip_special_tokens=True,
         )
-        action_logprobs: Dict[Action, float] = {}
-        for action, logprob in zip(actions, logprobs):
-            action_logprobs[action] = max(
-                logprob,
-                action_logprobs.get(action, float('-inf')),
-            )
+        outputs = []
+        for observation_index, value in enumerate(values):
+            start = observation_index * self.num_sampled_actions
+            end = start + self.num_sampled_actions
+            action_logprobs: Dict[Action, float] = {}
+            for action, logprob in zip(
+                generated_actions[start:end],
+                logprobs[start:end],
+            ):
+                action_logprobs[action] = max(
+                    logprob,
+                    action_logprobs.get(action, float('-inf')),
+                )
+            outputs.append(NetworkSamplingOutput(
+                action_logprobs=action_logprobs,
+                value=value,
+            ))
 
-        return NetworkSamplingOutput(
-            action_logprobs=action_logprobs,
-            value=value,
-        )
+        return outputs
 
     def update(
         self, batch: list[tuple[torch.Tensor, torch.Tensor, float]]

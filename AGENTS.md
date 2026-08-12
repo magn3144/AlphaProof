@@ -1,6 +1,6 @@
 # Notes for CODEX
 
-- Write implementations as simple as possible, reusing exsisting functionality and avoiding ovverly complicated structures.
+- Write implementations as simple as possible, reusing exsisting functionality and avoiding overly complicated structures.
 - The actual project is in "alphaproof/".
 - "pseudocode.py" is not part of the actual project. It is used as a guide for how to structure the code. The code in "alphaproof/" should closely follow the structure of "pseudocode.py".
 - When you want to use py_compile, dont place the cache files in this repo.
@@ -14,6 +14,7 @@
 - Dont write tests. Its not necessary for this project.
 - LeanTree is used as a submodule. Dont edit this, just see it as a library.
 - I want the main AlphaProof algorithm files (like train.py and actors.py) to be as minimal as possible, focusing on just implementing the core algorithm. Less important code like logging should be placed in separate files.
+- Parameters that are in config.py (like batch_size, lr, etc.) should not be set as defaults in any other places. config.py should be the single source of truth for these parameters.
 
 
 # Design choices
@@ -28,7 +29,7 @@ They might differ from the pseudocde, which is ok.
  - Computes tactic prior by summing token logprobs. This is used as the prior in PUCT.
  - Value head uses mean pooled encoder output.
  - Value head is currently linear layer.
- - TODO: Data for each run should be stored like this, so runs can be resumed:
+ - Data for each run is stored like this, so runs can be resumed:
  runs/
    0/
     config.json
@@ -39,11 +40,11 @@ They might differ from the pseudocde, which is ok.
       step_0001000.pt
       step_0002000.pt
       step_0003000.pt
- - Actors are run sequentially *for now*, for a specific amount of iterations each.
+ - Actors are run in parallel, for a specific amount of rollouts each.
  - Encoder called again every time a node is expanded.
  - The autoformalizer only generates one lean problem per natural language problem.
- - The dataset used for training is numina_math_lean_cleaned.jsonl for now.
  - Models used:
   - Data cleaning: Qwen3.6-27B
   - Autoformalization: Goedel-Prover-V2-32B
-  - Prover: Salesforce--codet5p-220m
+  - Prover: Salesforce--codet5p-770m
+ - 

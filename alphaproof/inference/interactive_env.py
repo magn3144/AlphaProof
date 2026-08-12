@@ -187,10 +187,12 @@ class ManualSession(BaseSession):
     def __init__(
         self,
         theorem: str,
+        tactic_timeout: float,
         imports: tuple[str, ...] = ('Mathlib',),
         environment: Environment | None = None,
     ):
         super().__init__(theorem, mode='manual', num_simulations=0)
+        self.tactic_timeout = tactic_timeout
         self.imports = imports
         self.environment = (
             environment
@@ -243,7 +245,11 @@ class ManualSession(BaseSession):
             record.error = None
 
         try:
-            state = self.environment.step(record.parent.state_id, record.action)
+            state = self.environment.step(
+                record.parent.state_id,
+                record.action,
+                self.tactic_timeout,
+            )
         except ValueError as exc:
             with self.lock:
                 record.status = 'invalid'
@@ -263,7 +269,11 @@ class ManualSession(BaseSession):
         if node_type == NodeType.AND:
             for index in range(state.num_goals):
                 focus_action = f'focus_goal {index}'
-                focus_state = self.environment.step(state.id, focus_action)
+                focus_state = self.environment.step(
+                    state.id,
+                    focus_action,
+                    self.tactic_timeout,
+                )
                 child.children[focus_action] = self._new_node(
                     focus_action,
                     focus_state,
@@ -329,7 +339,7 @@ class ObservedEnvironment:
         self,
         state_id: int,
         action: Action,
-        tactic_timeout: float = 1.0,
+        tactic_timeout: float,
     ) -> State:
         tactic = action_to_tactic(action)
         with self.session.lock:
@@ -481,10 +491,12 @@ class SessionStore:
 
     def __init__(
         self,
+        tactic_timeout: float,
         imports: tuple[str, ...] = ('Mathlib',),
         agent_runtime: AgentRuntime | None = None,
         manual_environment_factory: Callable[[str], Environment] | None = None,
     ):
+        self.tactic_timeout = tactic_timeout
         self.imports = imports
         self.agent_runtime = agent_runtime
         self.manual_environment_factory = manual_environment_factory
@@ -498,7 +510,12 @@ class SessionStore:
             if self.manual_environment_factory is not None
             else None
         )
-        session = ManualSession(theorem, self.imports, environment)
+        session = ManualSession(
+            theorem,
+            self.tactic_timeout,
+            self.imports,
+            environment,
+        )
         return self._store(session)
 
     def create_agent(self, theorem: str) -> dict[str, Any]:
@@ -669,8 +686,8 @@ def make_handler(store: SessionStore) -> type[BaseHTTPRequestHandler]:
             except Exception as exc:
                 self._send_json(400, {'error': str(exc)})
 
-        def log_message(self, fmt: str, *args: Any) -> None:
-            sys.stderr.write(f'{self.address_string()} - {fmt % args}\n')
+        def log_message(self, format: str, *args: Any) -> None:
+            sys.stderr.write(f'{self.address_string()} - {format % args}\n')
 
         def _theorem(self, data: dict[str, Any]) -> str:
             theorem = str(data.get('theorem', '')).strip()
@@ -715,7 +732,8 @@ def validate_run_dir(parser: argparse.ArgumentParser, run_dir: Path) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    default_run_dir = Config().sft_run_dir
+    defaults = Config()
+    default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description='Run the interactive AlphaProof backend.'
     )
@@ -730,10 +748,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f'(default: {default_run_dir}).'
         ),
     )
-    parser.add_argument('--num-simulations', type=int, default=800)
-    parser.add_argument('--num-sampled-actions', type=int, default=3)
-    parser.add_argument('--tactic-timeout', type=float, default=1.0)
-    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument(
+        '--num-simulations', type=int, default=defaults.num_simulations
+    )
+    parser.add_argument(
+        '--num-sampled-actions', type=int, default=defaults.num_sampled_actions
+    )
+    parser.add_argument(
+        '--tactic-timeout', type=float, default=defaults.tactic_timeout
+    )
+    parser.add_argument('--seed', type=int, default=defaults.seed)
+    parser.set_defaults(
+        parallel_searches=defaults.num_actors,
+        inference_batch_size=defaults.inference_batch_size,
+        inference_batch_timeout=defaults.inference_batch_timeout,
+    )
     parser.add_argument(
         '--imports',
         default='Mathlib',
@@ -756,7 +785,6 @@ def build_agent_runtime(args: argparse.Namespace) -> AgentRuntime:
     config = make_config(args)
     network = Network(config)
     checkpoint_path = load_network_checkpoint(args.run_dir, network)
-    network.num_sampled_actions = args.num_sampled_actions
     print(f'Loaded agent checkpoint: {checkpoint_path}')
     return AgentRuntime(config, network, args.seed)
 
@@ -767,7 +795,11 @@ def run_server(
     imports: tuple[str, ...],
     agent_runtime: AgentRuntime,
 ) -> None:
-    store = SessionStore(imports=imports, agent_runtime=agent_runtime)
+    store = SessionStore(
+        agent_runtime.config.tactic_timeout,
+        imports=imports,
+        agent_runtime=agent_runtime,
+    )
     server = HTTPServer((host, port), make_handler(store))
     print(f'Interactive AlphaProof backend running at http://{host}:{port}')
     try:

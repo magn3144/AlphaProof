@@ -2,34 +2,13 @@ import json
 import random
 from pathlib import Path
 
-from alphaproof.core.actors import play_game
 from alphaproof.core.config import Config
-from alphaproof.core.game import Game, ProofVerifier
+from alphaproof.core.game import Game
 from alphaproof.core.network import Network
-from alphaproof.training.matchmaker import Matchmaker
-from alphaproof.training.shared_storage import SharedStorage
+from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
 
 
 VALIDATION_THEOREMS_FILE = 'validation_theorems.json'
-
-
-class ValidationMatchmaker(Matchmaker):
-    """Provide one fixed proof objective without recording curriculum state."""
-
-    def __init__(self, config: Config, theorem: str):
-        self.config = config
-        self.theorem = theorem
-
-    def get_start_position(self) -> Game:
-        """Return the configured validation theorem."""
-        return Game(
-            theorem=self.theorem,
-            disprove=False,
-            num_simulations=self.config.num_simulations,
-        )
-
-    def reject_theorem(self, theorem: str) -> None:
-        """Leave fixed validation objectives unchanged."""
 
 
 def load_validation_theorems(
@@ -67,15 +46,19 @@ def load_validation_theorems(
 
 def validate_theorems(
     config: Config,
-    storage: SharedStorage,
+    network: Network,
     theorems: list[str],
-) -> list[Game | None]:
-    """Play the fixed validation theorem set without training side effects."""
-    network = Network(config)
-    network.params = storage.latest_params()
-    games: list[Game | None] = []
-    with ProofVerifier(config.final_check_timeout) as verifier:
-        for theorem in theorems:
-            matchmaker = ValidationMatchmaker(config, theorem)
-            games.append(play_game(config, network, matchmaker, verifier))
-    return games
+) -> list[Game]:
+    """Search the fixed validation theorem set without training side effects."""
+    requests = [
+        SearchRequest(
+            request_id=f'validation-{index}',
+            theorem=theorem,
+            disprove=False,
+            num_simulations=config.num_simulations,
+            stop_on_solution=True,
+        )
+        for index, theorem in enumerate(theorems)
+    ]
+    with ParallelSearchEngine(config, network) as engine:
+        return [result.game for result in engine.search(requests)]

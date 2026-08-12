@@ -2,29 +2,48 @@
 
 import argparse
 import json
-import random
 from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 
 import torch
 
+from alphaproof.core.config import Config
 from alphaproof.core.network import Network, Params
-from alphaproof.inference.infer import make_config, prove
-
-
-
+from alphaproof.inference.infer import make_config
+from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
+from alphaproof.training.randomness import seed_everything
 
 def parse_args() -> argparse.Namespace:
     """Parse checkpoint evaluation arguments."""
+    defaults = Config()
     parser = argparse.ArgumentParser()
     parser.add_argument('run_dir', type=Path)
     parser.add_argument('dataset_path', type=Path)
     parser.add_argument('output_dir', type=Path)
-    parser.add_argument('--num-simulations', type=int, default=32)
-    parser.add_argument('--num-sampled-actions', type=int, default=4)
-    parser.add_argument('--tactic-timeout', type=float, default=1.0)
-    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument(
+        '--num-simulations', type=int, default=defaults.num_simulations
+    )
+    parser.add_argument(
+        '--num-sampled-actions', type=int, default=defaults.num_sampled_actions
+    )
+    parser.add_argument(
+        '--tactic-timeout', type=float, default=defaults.tactic_timeout
+    )
+    parser.add_argument('--seed', type=int, default=defaults.seed)
+    parser.add_argument(
+        '--parallel-searches', type=int, default=defaults.num_actors
+    )
+    parser.add_argument(
+        '--inference-batch-size',
+        type=int,
+        default=defaults.inference_batch_size,
+    )
+    parser.add_argument(
+        '--inference-batch-timeout',
+        type=float,
+        default=defaults.inference_batch_timeout,
+    )
     return parser.parse_args()
 
 
@@ -63,6 +82,7 @@ def write_json(path: Path, value: Any) -> None:
 def main() -> None:
     """Evaluate each checkpoint on the same selected problems."""
     args = parse_args()
+    seed_everything(args.seed)
     checkpoints = sorted(
         (args.run_dir / 'checkpoints').glob('checkpoint_epoch_*.pt')
     )
@@ -83,17 +103,24 @@ def main() -> None:
             'num_sampled_actions': args.num_sampled_actions,
             'tactic_timeout': args.tactic_timeout,
             'seed': args.seed,
+            'parallel_searches': args.parallel_searches,
+            'inference_batch_size': args.inference_batch_size,
+            'inference_batch_timeout': args.inference_batch_timeout,
         },
     )
 
     config_args = argparse.Namespace(
         run_dir=args.run_dir,
         num_simulations=args.num_simulations,
+        num_sampled_actions=args.num_sampled_actions,
         tactic_timeout=args.tactic_timeout,
+        parallel_searches=args.parallel_searches,
+        inference_batch_size=args.inference_batch_size,
+        inference_batch_timeout=args.inference_batch_timeout,
+        seed=args.seed,
     )
     config = make_config(config_args)
     network = Network(config)
-    network.num_sampled_actions = args.num_sampled_actions
 
     summaries = []
     results_path = args.output_dir / 'results.jsonl'
@@ -101,18 +128,27 @@ def main() -> None:
         for checkpoint_path in checkpoints:
             epoch = load_checkpoint(checkpoint_path, network)
             solved = 0
-            checkpoint_seconds = 0.0
             print(f'Evaluating {checkpoint_path.name}', flush=True)
+            checkpoint_started = perf_counter()
+            requests = [
+                SearchRequest(
+                    request_id=str(problem_index),
+                    theorem=problem['theorem'],
+                    disprove=False,
+                    num_simulations=config.num_simulations,
+                    stop_on_solution=True,
+                )
+                for problem_index, problem in enumerate(problems)
+            ]
+            with ParallelSearchEngine(config, network) as engine:
+                search_results = engine.search(requests)
+            checkpoint_seconds = perf_counter() - checkpoint_started
 
-            for problem_index, problem in enumerate(problems):
-                problem_seed = args.seed + problem_index
-                random.seed(problem_seed)
-                torch.manual_seed(problem_seed)
-
-                start = perf_counter()
-                game = prove(problem['theorem'], config, network)
-                elapsed_seconds = perf_counter() - start
-                checkpoint_seconds += elapsed_seconds
+            for problem_index, (problem, search_result) in enumerate(
+                zip(problems, search_results)
+            ):
+                game = search_result.game
+                elapsed_seconds = search_result.duration_seconds
                 solved += int(game.root.is_optimal)
 
                 result = {
@@ -121,8 +157,9 @@ def main() -> None:
                     'problem_index': problem_index,
                     'problem_id': problem['id'],
                     'difficulty': problem['difficulty'],
-                    'seed': problem_seed,
+                    'seed': args.seed,
                     'solved': game.root.is_optimal,
+                    'rejected': search_result.rejected,
                     'proof': game.final_proof,
                     'error': game.error,
                     'elapsed_seconds': elapsed_seconds,

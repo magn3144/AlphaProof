@@ -1,6 +1,5 @@
 ## AlphaProof implementation
 - [X] Benchmark execution times of different tasks in the code.
-- [ ] Make run_actor and everything downstream pure functions.
 - [ ] Make rollout agents run in parallel.
 - [X] CLI for training.
 - [X] CLI for inference.

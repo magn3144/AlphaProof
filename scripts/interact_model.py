@@ -14,7 +14,8 @@ from alphaproof.training.sft import resolve_device
 
 def parse_args() -> argparse.Namespace:
     """Parse model interaction arguments."""
-    default_run_dir = Config().sft_run_dir
+    defaults = Config()
+    default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description=(
             'Sample tactics directly from a trained Salesforce CodeT5+ model.'
@@ -29,13 +30,15 @@ def parse_args() -> argparse.Namespace:
             f'(default: {default_run_dir}).'
         ),
     )
-    parser.add_argument('--num-sampled-actions', type=int, default=8)
+    parser.add_argument(
+        '--num-sampled-actions', type=int, default=defaults.num_sampled_actions
+    )
     parser.add_argument(
         '--device',
         choices=('auto', 'cpu', 'cuda', 'mps'),
         default='auto',
     )
-    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=defaults.seed)
     args = parser.parse_args()
 
     if not args.run_dir.is_dir():
@@ -69,15 +72,20 @@ def main() -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    defaults = Config()
     config_args = argparse.Namespace(
         run_dir=args.run_dir,
-        num_simulations=1,
-        tactic_timeout=1.0,
+        num_simulations=defaults.num_simulations,
+        num_sampled_actions=args.num_sampled_actions,
+        tactic_timeout=defaults.tactic_timeout,
+        parallel_searches=defaults.num_actors,
+        inference_batch_size=defaults.inference_batch_size,
+        inference_batch_timeout=defaults.inference_batch_timeout,
+        seed=args.seed,
     )
     config = make_config(config_args)
     network = Network(config)
     checkpoint_path = load_network_checkpoint(args.run_dir, network)
-    network.num_sampled_actions = args.num_sampled_actions
     network.device = resolve_device(args.device)
     network.to(network.device)
 

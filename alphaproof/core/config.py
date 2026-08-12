@@ -22,6 +22,11 @@ class Config:
         batch_size: int = 10,
         num_actors: int = 1,
         num_games: int = 32,
+        inference_batch_size: int = 4,
+        inference_batch_timeout: float = 0.05,
+        num_sampled_actions: int = 6,
+        tactic_timeout: float = 1.0,
+        final_check_timeout: float = 300.0,
         seed: int | None = None,
         debug: bool = False,
         lr: float = 1e-5,
@@ -74,11 +79,14 @@ class Config:
             self.initial_params_path = self.sft_run_dir / 'network_params.pt'
         self.num_actors = num_actors
         self.num_games = num_games
+        self.inference_batch_size = inference_batch_size
+        self.inference_batch_timeout = inference_batch_timeout
         self.num_simulations = num_simulations
+        self.num_sampled_actions = num_sampled_actions
         self.seed = secrets.randbits(63) if seed is None else seed
         self.debug = debug
-        self.tactic_timeout = 1.0
-        self.final_check_timeout = 300.0
+        self.tactic_timeout = tactic_timeout
+        self.final_check_timeout = final_check_timeout
 
         # UCB formula
         self.pb_c_base = 3200
@@ -89,7 +97,6 @@ class Config:
         self.unvisited_value_penalty = 32
 
         # Other MCTS parameters
-        self.num_sampled_actions = 6
         self.no_legal_actions_value = -40
 
         # Progressive sampling parameters
