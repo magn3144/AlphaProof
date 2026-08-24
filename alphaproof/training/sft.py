@@ -14,22 +14,13 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerBase, RobertaTokenizer
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import Config, SFTConfig
 from alphaproof.core.network import Network
-from alphaproof.core.paths import DATASET_DIR, MODELS_DIR, RUNS_DIR
+from alphaproof.core.paths import RUNS_DIR
 from alphaproof.training.run_config import serializable_args
 from alphaproof.training.sft_logger import SFTLogger
 
 
-DEFAULT_TRAIN_INPUT = (
-    DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
-)
-DEFAULT_VALIDATION_INPUT = (
-    DATASET_DIR / 'leantree_mathlib_state_action_pairs.validation.jsonl'
-)
-DEFAULT_MODEL_PATH = MODELS_DIR / 'Salesforce--codet5p-770m'
-DEFAULT_VALIDATION_INTERVAL = 500
-DEFAULT_VALIDATION_SAMPLES = 512
 TORCH_DTYPES = {
     'float32': torch.float32,
     'float16': torch.float16,
@@ -742,54 +733,67 @@ def positive_int(value: str) -> int:
 
 def parse_args() -> argparse.Namespace:
     """Parse supervised fine-tuning command-line arguments."""
+    defaults = SFTConfig()
     parser = argparse.ArgumentParser(
         description='Fine-tune AlphaProof on LeanTree transitions.'
     )
     parser.add_argument('run_name', help='Directory name under data/runs.')
-    parser.add_argument('--train-input', type=Path, default=DEFAULT_TRAIN_INPUT)
+    parser.add_argument('--train-input', type=Path, default=defaults.train_input)
     parser.add_argument(
-        '--validation-input', type=Path, default=DEFAULT_VALIDATION_INPUT
+        '--validation-input', type=Path, default=defaults.validation_input
     )
-    parser.add_argument('--model', type=Path, default=DEFAULT_MODEL_PATH)
-    parser.add_argument('--epochs', type=positive_int, required=True)
+    parser.add_argument('--model', type=Path, default=defaults.model)
+    parser.add_argument('--epochs', type=positive_int, default=defaults.epochs)
     parser.add_argument(
         '--checkpoints-per-epoch',
         type=positive_int,
-        default=1,
+        default=defaults.checkpoints_per_epoch,
     )
-    parser.add_argument('--num-pairs', type=positive_int)
-    parser.add_argument('--num-validation-pairs', type=positive_int)
-    parser.add_argument('--batch-size', type=positive_int, default=8)
-    parser.add_argument('--learning-rate', type=float, default=5e-5)
-    parser.add_argument('--value-weight', type=float, default=0.001)
-    parser.add_argument('--max-state-length', type=positive_int, default=640)
-    parser.add_argument('--max-action-length', type=positive_int, default=128)
-    parser.add_argument('--max-grad-norm', type=float, default=1.0)
-    parser.add_argument('--log-every', type=positive_int, default=100)
+    parser.add_argument('--num-pairs', type=positive_int, default=defaults.num_pairs)
+    parser.add_argument(
+        '--num-validation-pairs',
+        type=positive_int,
+        default=defaults.num_validation_pairs,
+    )
+    parser.add_argument('--batch-size', type=positive_int, default=defaults.batch_size)
+    parser.add_argument('--learning-rate', type=float, default=defaults.learning_rate)
+    parser.add_argument('--value-weight', type=float, default=defaults.value_weight)
+    parser.add_argument(
+        '--max-state-length', type=positive_int, default=defaults.max_state_length
+    )
+    parser.add_argument(
+        '--max-action-length', type=positive_int, default=defaults.max_action_length
+    )
+    parser.add_argument('--max-grad-norm', type=float, default=defaults.max_grad_norm)
+    parser.add_argument('--log-every', type=positive_int, default=defaults.log_every)
     parser.add_argument(
         '--validation-interval',
         type=positive_int,
-        default=DEFAULT_VALIDATION_INTERVAL,
-        help='Optimizer steps between validation checks (default: 500).',
+        default=defaults.validation_interval,
+        help='Optimizer steps between validation checks.',
     )
     parser.add_argument(
         '--validation-samples',
         type=positive_int,
-        default=DEFAULT_VALIDATION_SAMPLES,
-        help='Fixed validation subset used for frequent checks (default: 512).',
+        default=defaults.validation_samples,
+        help='Fixed validation subset used for frequent checks.',
     )
-    parser.add_argument('--wandb-name')
+    parser.add_argument('--wandb-name', default=defaults.wandb_name)
     parser.add_argument(
         '--wandb-mode',
         choices=('online', 'offline', 'disabled'),
-        default='disabled',
+        default=defaults.wandb_mode,
     )
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--device', choices=('auto', 'cpu', 'cuda', 'mps'), default='auto')
+    parser.add_argument('--seed', type=int, default=defaults.seed)
+    parser.add_argument(
+        '--device',
+        choices=('auto', 'cpu', 'cuda', 'mps'),
+        default=defaults.device,
+    )
     parser.add_argument(
         '--dtype',
         choices=tuple(TORCH_DTYPES),
-        default='bfloat16',
+        default=defaults.dtype,
         help='Floating-point precision used for model training.',
     )
     parser.add_argument('--resume', action='store_true')

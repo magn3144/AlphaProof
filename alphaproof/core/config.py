@@ -1,4 +1,5 @@
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -11,6 +12,37 @@ from alphaproof.core.paths import (
     RUNS_DIR,
 )
 from leantree import LeanProject
+
+
+@dataclass(frozen=True)
+class SFTConfig:
+    """Default supervised fine-tuning hyperparameters."""
+
+    train_input: Path = (
+        DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
+    )
+    validation_input: Path = (
+        DATASET_DIR / 'leantree_mathlib_state_action_pairs.validation.jsonl'
+    )
+    model: Path = MODELS_DIR / 'Salesforce--codet5p-770m'
+    epochs: int = 1
+    checkpoints_per_epoch: int = 1
+    num_pairs: int | None = None
+    num_validation_pairs: int | None = None
+    batch_size: int = 8
+    learning_rate: float = 5e-5
+    value_weight: float = 0.001
+    max_state_length: int = 640
+    max_action_length: int = 128
+    max_grad_norm: float = 1.0
+    log_every: int = 100
+    validation_interval: int = 500
+    validation_samples: int = 512
+    wandb_name: str | None = None
+    wandb_mode: str = 'disabled'
+    seed: int = 0
+    device: str = 'auto'
+    dtype: str = 'bfloat16'
 
 
 class Config:
