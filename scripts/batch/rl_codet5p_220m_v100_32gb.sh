@@ -12,7 +12,7 @@
 
 set -eu
 
-cd /work3/s204164/mini-alphaproof
+cd /work3/s204164/delta-proof
 mkdir -p scripts/batch/logs
 
 module purge
@@ -25,14 +25,14 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_04}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_05}"
 
 nvidia-smi
 uv sync --frozen
 
 set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
-    --dataset-dir data/dataset/numina_math_lean_cleaned \
+    --dataset-dir data/dataset/numina_math_lean_passing \
     --num-simulations 250 \
     --num-games 2000 \
     --batch-size 20 \

@@ -15,6 +15,8 @@
 - LeanTree is used as a submodule. Dont edit this, just see it as a library.
 - I want the main AlphaProof algorithm files (like train.py and actors.py) to be as minimal as possible, focusing on just implementing the core algorithm. Less important code like logging should be placed in separate files.
 - Parameters that are in config.py (like batch_size, lr, etc.) should not be set as defaults in any other places. config.py should be the single source of truth for these parameters.
+- Dont edit the README.md, unless I explicitly ask you to.
+- When I ask a question give me a concise answer that gets straight to the point.
 
 
 # Design choices
@@ -47,4 +49,3 @@ They might differ from the pseudocde, which is ok.
   - Data cleaning: Qwen3.6-27B
   - Autoformalization: Goedel-Prover-V2-32B
   - Prover: Salesforce--codet5p-770m
- - 
