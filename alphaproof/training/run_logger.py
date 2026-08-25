@@ -66,8 +66,9 @@ class RunLogger:
         self.reward_window = reward_window
         self.wandb_run = wandb_run
         self.diagnostics = RunDiagnostics(run_dir)
-        successes, rewards = self._load_results()
+        successes, rewards, proved_theorems = self._load_results()
         self.games_completed = len(successes)
+        self.proved_theorems = proved_theorems
         self.recent_successes = deque(
             successes[-reward_window:], maxlen=reward_window
         )
@@ -100,6 +101,8 @@ class RunLogger:
             else None
         )
         self.games_completed += 1
+        if success and not game.disprove:
+            self.proved_theorems.add(game.theorem)
         record = {
             'game': self.games_completed,
             'theorem': game.theorem,
@@ -128,6 +131,7 @@ class RunLogger:
             'actor/game': self.games_completed,
             'actor/success': success,
             'actor/rolling_success_rate': rolling_success_rate,
+            'actor/unique_theorems_proved': len(self.proved_theorems),
             'actor/num_simulations': game.num_simulations,
             'actor/game_seconds': game.timings.total_seconds,
             'actor/setup_seconds': game.timings.setup_seconds,
@@ -273,19 +277,22 @@ class RunLogger:
         finally:
             self.diagnostics.close()
 
-    def _load_results(self) -> tuple[list[int], list[int]]:
+    def _load_results(self) -> tuple[list[int], list[int], set[str]]:
         """Load completed successes and solved rewards when resuming."""
         if not self.results_path.exists():
-            return [], []
+            return [], [], set()
         successes = []
         rewards = []
+        proved_theorems = set()
         with self.results_path.open(encoding='utf-8') as results_file:
             for line in results_file:
                 record = json.loads(line)
                 successes.append(int(record['success']))
+                if record['success'] and not record['disprove']:
+                    proved_theorems.add(str(record['theorem']))
                 if record['episode_reward'] is not None:
                     rewards.append(int(record['episode_reward']))
-        return successes, rewards
+        return successes, rewards, proved_theorems
 
     def _load_validation_games(self) -> set[int]:
         """Load completed validation points when resuming."""
