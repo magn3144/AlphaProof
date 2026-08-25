@@ -190,7 +190,7 @@ def make_network(args: argparse.Namespace, device: torch.device) -> Network:
         num_simulations=1,
         batch_size=args.batch_size,
         num_actors=1,
-        num_games=1,
+        num_games_per_actor=1,
         lr=args.learning_rate,
         tokenizer_model=str(args.model),
         sft_run_dir=None,

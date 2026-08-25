@@ -155,7 +155,7 @@ def make_config(
         sft_fraction=args.sft_fraction,
         disprove_rate=args.disprove_rate,
         num_actors=args.num_actors,
-        num_games=args.num_games,
+        num_games_per_actor=args.num_games,
         inference_batch_size=args.inference_batch_size,
         inference_batch_timeout=args.inference_batch_timeout,
         rollout_max_action_length=args.rollout_max_action_length,

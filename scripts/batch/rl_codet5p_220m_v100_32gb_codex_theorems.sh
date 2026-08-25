@@ -34,7 +34,7 @@ set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
     --dataset-dir data/dataset/codex_theorems \
     --num-simulations 250 \
-    --num-games 2000 \
+    --num-games 250 \
     --batch-size 20 \
     --learning-rate 1e-5 \
     --training-steps 40000 \

@@ -41,7 +41,7 @@ def make_config(args: argparse.Namespace) -> Config:
         num_simulations=args.num_simulations,
         batch_size=1,
         num_actors=args.parallel_searches,
-        num_games=1,
+        num_games_per_actor=1,
         inference_batch_size=args.inference_batch_size,
         inference_batch_timeout=args.inference_batch_timeout,
         num_sampled_actions=args.num_sampled_actions,

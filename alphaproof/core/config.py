@@ -52,8 +52,8 @@ class Config:
         self,
         num_simulations: int = 64,
         batch_size: int = 20,
-        num_actors: int = 1,
-        num_games: int = 50_000,
+        num_actors: int = 8,
+        num_games_per_actor: int = 6_250,
         inference_batch_size: int = 4,
         inference_batch_timeout: float = 0.05,
         num_sampled_actions: int = 6,
@@ -111,7 +111,7 @@ class Config:
             self.tokenizer_model = str(self.sft_run_dir / 'model_source')
             self.initial_params_path = self.sft_run_dir / 'network_params.pt'
         self.num_actors = num_actors
-        self.num_games = num_games
+        self.num_games = num_games_per_actor
         self.inference_batch_size = inference_batch_size
         self.inference_batch_timeout = inference_batch_timeout
         self.num_simulations = num_simulations

@@ -34,7 +34,7 @@ set -- -m alphaproof.training.train \
     "${RUN_NAME}" \
     --dataset-dir data/dataset/numina_math_lean_passing \
     --num-simulations 64 \
-    --num-games 2000 \
+    --num-games 250 \
     --rollout-max-action-length 32 \
     --batch-size 20 \
     --learning-rate 1e-5 \
