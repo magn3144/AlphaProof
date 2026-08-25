@@ -50,10 +50,10 @@ class Config:
 
     def __init__(
         self,
-        num_simulations: int = 250,
-        batch_size: int = 10,
+        num_simulations: int = 64,
+        batch_size: int = 20,
         num_actors: int = 1,
-        num_games: int = 32,
+        num_games: int = 50_000,
         inference_batch_size: int = 4,
         inference_batch_timeout: float = 0.05,
         num_sampled_actions: int = 6,
@@ -65,7 +65,7 @@ class Config:
         environment_ctor: Callable[[], Environment] = (
             lambda: Environment(LeanProject(str(LEAN_PROJECT_DIR)))
         ),
-        tokenizer_model: str = str(MODELS_DIR / 'Salesforce--codet5p-220m'),
+        tokenizer_model: str = str(MODELS_DIR / 'Salesforce--codet5p-770m'),
         dataset_dir: str | Path = DEFAULT_THEOREMS_DIR,
         sft_dataset_path: str | Path = (
             DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
@@ -74,19 +74,20 @@ class Config:
         disprove_rate: float = 0.0,
         run_id: int | str = 0,
         sft_run_dir: str | Path | None = (
-            RUNS_DIR / 'sft_codet5p_220m_v100_32gb'
+            RUNS_DIR / 'sft_codet5p_770m_v100_32gb'
         ),
         max_state_length: int = 640,
         max_action_length: int = 128,
-        training_steps: int = 10_000,
-        training_iterations: int = 8,
-        checkpoint_interval: int = int(1e3),
-        window_size: int = int(1e6),
-        value_weight: float = 0.001,
+        rollout_max_action_length: int = 32,
+        training_steps: int = 5_000,
+        training_iterations: int = 1_000,
+        checkpoint_interval: int = 250,
+        window_size: int = 250_000,
+        value_weight: float = 0.01,
         validation_fraction: float = 0.05,
         validation_batch_size: int = 64,
         validation_interval: int = 100,
-        theorem_validation_interval_games: int = 50,
+        theorem_validation_interval_games: int = 2_500,
         theorem_validation_num_theorems: int = 20,
         log_interval: int = 10,
         reward_window: int = 100,
@@ -121,18 +122,18 @@ class Config:
         self.final_check_timeout = final_check_timeout
 
         # UCB formula
-        self.pb_c_base = 3200
+        self.pb_c_base = 200
         self.pb_c_init = 0.001
-        self.value_discount = 0.99
+        self.value_discount = 0.98
         self.prior_temperature = 200
         self.c_and = 64
-        self.unvisited_value_penalty = 32
+        self.unvisited_value_penalty = 16
 
         # Other MCTS parameters
-        self.no_legal_actions_value = -40
+        self.no_legal_actions_value = -5
 
         # Progressive sampling parameters
-        self.ps_c = 0.01
+        self.ps_c = 0.1
         self.ps_alpha = 0.6
 
         # Value predictions
@@ -148,6 +149,7 @@ class Config:
         self.max_state_length = max_state_length
         self.max_action_length = max_action_length
         self.lr = lr
+        self.rollout_max_action_length = rollout_max_action_length
         self.value_weight = value_weight
         self.validation_fraction = validation_fraction
         self.validation_batch_size = validation_batch_size
@@ -166,12 +168,12 @@ class Config:
 
         # Matchmaker
         self.mm_disprove_rate = disprove_rate
-        self.mm_trust_count = 8
-        self.mm_fully_decided_trust_count = 12
+        self.mm_trust_count = 4
+        self.mm_fully_decided_trust_count = 6
         self.mm_proved_weight = 1e-3
         self.mm_undecided_weight = 0.1
-        self.mm_simulation_failure_window = 32
-        self.mm_simulation_failure_multiplier = 1.17
-        self.mm_max_num_simulations = 16_000
+        self.mm_simulation_failure_window = 4
+        self.mm_simulation_failure_multiplier = 1.5
+        self.mm_max_num_simulations = 1_024
 
         self.run_id = run_id

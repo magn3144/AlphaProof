@@ -1,14 +1,14 @@
 #!/bin/sh
 #BSUB -q gpuv100
-#BSUB -J rl_codet5p_220m_v100
+#BSUB -J rl_codet5p_770m_v100
 #BSUB -n 4
 #BSUB -R "span[hosts=1]"
 #BSUB -R "select[gpu32gb]"
 #BSUB -R "rusage[mem=8GB]"
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o scripts/batch/logs/rl_codet5p_220m_%J.out
-#BSUB -e scripts/batch/logs/rl_codet5p_220m_%J.err
+#BSUB -o scripts/batch/logs/rl_codet5p_770m_%J.out
+#BSUB -e scripts/batch/logs/rl_codet5p_770m_%J.err
 
 set -eu
 
@@ -25,24 +25,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_220m_v100_32gb_05}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_770m_v100_32gb_01}"
 
 nvidia-smi
 uv sync --frozen
 
-set -- -m alphaproof.training.train \
-    "${RUN_NAME}" \
-    --dataset-dir data/dataset/numina_math_lean_passing \
-    --num-simulations 64 \
-    --num-games 2000 \
-    --rollout-max-action-length 32 \
-    --batch-size 20 \
-    --learning-rate 1e-5 \
-    --training-steps 200 \
-    --training-iterations 200 \
-    --checkpoint-interval 50 \
-    --value-weight 0.01 \
-    --wandb-mode online
+set -- -m alphaproof.training.train "${RUN_NAME}" --wandb-mode online
 
 if [ -d "data/runs/${RUN_NAME}" ]; then
     echo "Resuming existing RL run ${RUN_NAME}."

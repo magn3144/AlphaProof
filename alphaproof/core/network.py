@@ -38,6 +38,7 @@ class Network(nn.Module):
         self.value_weight = config.value_weight
         self.max_state_length = config.max_state_length
         self.max_action_length = config.max_action_length
+        self.rollout_max_action_length = config.rollout_max_action_length
         self.device: torch.device = torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'
         )
@@ -227,7 +228,7 @@ class Network(nn.Module):
             generated = generation_model.generate(
                 encoder_outputs=encoder_outputs,
                 attention_mask=attention_mask,
-                max_new_tokens=self.max_action_length,
+                max_new_tokens=self.rollout_max_action_length,
                 num_return_sequences=self.num_sampled_actions,
                 do_sample=True,
                 output_scores=True,

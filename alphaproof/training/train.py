@@ -158,6 +158,7 @@ def make_config(
         num_games=args.num_games,
         inference_batch_size=args.inference_batch_size,
         inference_batch_timeout=args.inference_batch_timeout,
+        rollout_max_action_length=args.rollout_max_action_length,
         seed=args.seed,
         debug=args.debug,
         lr=args.learning_rate,
@@ -229,6 +230,11 @@ def parse_args() -> argparse.Namespace:
         '--inference-batch-timeout',
         type=float,
         default=defaults.inference_batch_timeout,
+    )
+    parser.add_argument(
+        '--rollout-max-action-length',
+        type=positive_int,
+        default=defaults.rollout_max_action_length,
     )
     parser.add_argument(
         '--batch-size', type=positive_int, default=defaults.batch_size

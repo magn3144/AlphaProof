@@ -61,6 +61,12 @@ def make_config(args: argparse.Namespace) -> Config:
                 run_data.get('max_action_length', defaults.max_action_length),
             )
         ),
+        rollout_max_action_length=int(
+            saved_config.get(
+                'rollout_max_action_length',
+                defaults.rollout_max_action_length,
+            )
+        ),
     )
     for name in (
         'pb_c_base',
