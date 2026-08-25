@@ -12,6 +12,11 @@ from alphaproof.core.environment import Action
 
 
 Params = dict[str, torch.Tensor]
+TORCH_DTYPES = {
+    'float32': torch.float32,
+    'bfloat16': torch.bfloat16,
+    'mixed': torch.float32,
+}
 
 
 class NetworkTrainingOutput(typing.NamedTuple):
@@ -39,6 +44,7 @@ class Network(nn.Module):
         self.max_state_length = config.max_state_length
         self.max_action_length = config.max_action_length
         self.rollout_max_action_length = config.rollout_max_action_length
+        self.mixed_precision = config.dtype == 'mixed'
         self.device: torch.device = torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'
         )
@@ -60,7 +66,7 @@ class Network(nn.Module):
             steps=self.num_value_bins,
         )
         self.register_buffer('value_bins', value_bins)
-        self.to(self.device)
+        self.to(device=self.device, dtype=TORCH_DTYPES[config.dtype])
         self.optimizer = torch.optim.Adam(self.parameters(), lr=config.lr)
 
     @property
@@ -100,11 +106,16 @@ class Network(nn.Module):
             device=self.device,
         )
 
-        network_output = self.forward(observations, actions)
+        with torch.autocast(
+            device_type=self.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.mixed_precision,
+        ):
+            network_output = self.forward(observations, actions)
         return (
-            network_output.policy_loss
+            network_output.policy_loss.float()
             + self.value_weight
-            * self.value_loss(network_output.value_logits, value_targets)
+            * self.value_loss(network_output.value_logits.float(), value_targets)
         )
 
     def value_loss(
@@ -210,7 +221,11 @@ class Network(nn.Module):
         input_ids = encoded.input_ids.to(self.device)
         attention_mask = encoded.attention_mask.to(self.device)
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(
+            device_type=self.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.mixed_precision,
+        ):
             encoder_outputs = self.model.get_encoder()(
                 input_ids=input_ids,
                 attention_mask=attention_mask,

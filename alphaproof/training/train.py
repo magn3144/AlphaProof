@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import Config, RL_PRECISIONS
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
 from alphaproof.training.actor_phase import run_actor_phase
@@ -162,6 +162,7 @@ def make_config(
         seed=args.seed,
         debug=args.debug,
         lr=args.learning_rate,
+        dtype=args.dtype,
         run_id=args.run_name,
         training_steps=args.training_steps,
         training_iterations=args.training_iterations,
@@ -240,6 +241,11 @@ def parse_args() -> argparse.Namespace:
         '--batch-size', type=positive_int, default=defaults.batch_size
     )
     parser.add_argument('--learning-rate', type=float, default=defaults.lr)
+    parser.add_argument(
+        '--dtype',
+        choices=RL_PRECISIONS,
+        default=defaults.dtype,
+    )
     parser.add_argument(
         '--training-steps', type=positive_int, default=defaults.training_steps
     )

@@ -14,6 +14,9 @@ from alphaproof.core.paths import (
 from leantree import LeanProject
 
 
+RL_PRECISIONS = ('float32', 'bfloat16', 'mixed')
+
+
 @dataclass(frozen=True)
 class SFTConfig:
     """Default supervised fine-tuning hyperparameters."""
@@ -51,10 +54,10 @@ class Config:
     def __init__(
         self,
         num_simulations: int = 64,
-        batch_size: int = 20,
-        num_actors: int = 8,
-        num_games_per_actor: int = 6_250,
-        inference_batch_size: int = 4,
+        batch_size: int = 10,
+        num_actors: int = 48,
+        num_games_per_actor: int = 1_000,
+        inference_batch_size: int = 32,
         inference_batch_timeout: float = 0.05,
         num_sampled_actions: int = 6,
         tactic_timeout: float = 1.0,
@@ -62,6 +65,7 @@ class Config:
         seed: int | None = None,
         debug: bool = False,
         lr: float = 1e-5,
+        dtype: str = 'float32',
         environment_ctor: Callable[[], Environment] = (
             lambda: Environment(LeanProject(str(LEAN_PROJECT_DIR)))
         ),
@@ -70,7 +74,7 @@ class Config:
         sft_dataset_path: str | Path = (
             DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
         ),
-        sft_fraction: float = 0.1,
+        sft_fraction: float = 1 / 10,
         disprove_rate: float = 0.0,
         run_id: int | str = 0,
         sft_run_dir: str | Path | None = (
@@ -85,9 +89,9 @@ class Config:
         window_size: int = 250_000,
         value_weight: float = 0.01,
         validation_fraction: float = 0.05,
-        validation_batch_size: int = 64,
+        validation_batch_size: int = 10,
         validation_interval: int = 100,
-        theorem_validation_interval_games: int = 2_500,
+        theorem_validation_interval_games: int = 2_400,
         theorem_validation_num_theorems: int = 20,
         log_interval: int = 10,
         reward_window: int = 100,
@@ -149,6 +153,7 @@ class Config:
         self.max_state_length = max_state_length
         self.max_action_length = max_action_length
         self.lr = lr
+        self.dtype = dtype
         self.rollout_max_action_length = rollout_max_action_length
         self.value_weight = value_weight
         self.validation_fraction = validation_fraction
