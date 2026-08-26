@@ -75,11 +75,10 @@ class RunLogger:
         self.recent_rewards = deque(rewards[-reward_window:], maxlen=reward_window)
         self.validation_games = self._load_validation_games()
 
-    def log_game_start(self, game: Game) -> None:
+    def log_game_start(self, request_id: str, game: Game) -> None:
         """Persist the game being started before Lean is launched."""
-        game_number = self.games_completed + 1
-        self.diagnostics.game_started(game_number, game)
-        print(f'Starting game {game_number}.', flush=True)
+        self.diagnostics.game_started(request_id, game)
+        print(f'Starting {request_id}.', flush=True)
 
     def log_learner_start(self, start_step: int, num_steps: int) -> None:
         """Persist the learner range about to run."""

@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from threading import Condition, Thread
@@ -217,41 +218,73 @@ class ParallelSearchEngine:
         if not requests:
             return []
 
+        request_indices: dict[int, deque[int]] = {}
+        for index, request in enumerate(requests):
+            request_indices.setdefault(id(request), deque()).append(index)
+        request_iterator = iter(requests)
         results: list[SearchResult | None] = [None] * len(requests)
-        next_request = 0
+
+        def store_result(result: SearchResult) -> bool:
+            index = request_indices[id(result.request)].popleft()
+            results[index] = result
+            return True
+
+        self._run_searches(
+            lambda: next(request_iterator),
+            store_result,
+            len(requests),
+        )
+        if any(result is None for result in results):
+            raise RuntimeError('Parallel search completed without every result.')
+        return [result for result in results if result is not None]
+
+    def search_continuously(
+        self,
+        request_factory: Callable[[], SearchRequest],
+        handle_result: Callable[[SearchResult], bool],
+        num_results: int,
+    ) -> None:
+        """Keep all search slots occupied until enough results are accepted."""
+        self._run_searches(request_factory, handle_result, num_results)
+
+    def _run_searches(
+        self,
+        request_factory: Callable[[], SearchRequest],
+        handle_result: Callable[[SearchResult], bool],
+        num_results: int,
+    ) -> None:
+        """Run dynamic requests until enough results are accepted."""
+        if num_results < 1:
+            return
+
         executor = ThreadPoolExecutor(
             max_workers=self.parallel_searches,
             thread_name_prefix='AlphaProofSearch',
         )
-        active: dict[Future[SearchResult], int] = {}
-        try:
-            while next_request < min(self.parallel_searches, len(requests)):
-                future = executor.submit(self._search_one, requests[next_request])
-                active[future] = next_request
-                next_request += 1
+        active: set[Future[SearchResult]] = set()
+        accepted = 0
 
+        def fill_slots() -> None:
+            while (
+                len(active) < self.parallel_searches
+                and accepted + len(active) < num_results
+            ):
+                active.add(executor.submit(self._search_one, request_factory()))
+
+        try:
+            fill_slots()
             while active:
                 done, _ = wait(active, return_when=FIRST_COMPLETED)
                 for future in done:
-                    index = active.pop(future)
-                    results[index] = future.result()
-                    if next_request < len(requests):
-                        replacement = executor.submit(
-                            self._search_one,
-                            requests[next_request],
-                        )
-                        active[replacement] = next_request
-                        next_request += 1
+                    active.remove(future)
+                    accepted += int(handle_result(future.result()))
+                    fill_slots()
         except BaseException:
             for future in active:
                 future.cancel()
             executor.shutdown(wait=True, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
-
-        if any(result is None for result in results):
-            raise RuntimeError('Parallel search completed without every result.')
-        return [result for result in results if result is not None]
 
     def _search_one(self, request: SearchRequest) -> SearchResult:
         started = perf_counter()

@@ -1,6 +1,7 @@
 ## AlphaProof implementation
 - [X] Benchmark execution times of different tasks in the code.
 - [ ] Make rollout agents run in parallel.
+- [ ] Parallelize RL training over two GPUs.
 - [X] CLI for training.
 - [X] CLI for inference.
 - [X] Fix discrepancies between implementation and original AlphaProof paper.

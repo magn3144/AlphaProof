@@ -22,13 +22,13 @@ class RunDiagnostics:
         self.status: dict[str, object] = {}
         faulthandler.enable(file=self.crash_file, all_threads=True)
 
-    def game_started(self, game_number: int, game: Game) -> None:
+    def game_started(self, request_id: str, game: Game) -> None:
         """Record a game before Lean starts processing it."""
         self._write_status(
             {
                 'state': 'running',
                 'phase': 'actor',
-                'game': game_number,
+                'request_id': request_id,
                 'theorem': game.theorem,
             }
         )
