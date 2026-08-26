@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from threading import Condition, Thread
 from time import perf_counter
 
-from alphaproof.core.actors import play_game
+from alphaproof.core.actors import ObjectiveRejection, play_game
 from alphaproof.core.config import Config
 from alphaproof.core.game import Game, ProofVerifier
 from alphaproof.core.network import Network, NetworkSamplingOutput
@@ -29,7 +29,7 @@ class SearchResult:
 
     request: SearchRequest
     game: Game
-    rejected: bool
+    rejection: ObjectiveRejection | None
     duration_seconds: float
 
 
@@ -297,7 +297,7 @@ class ParallelSearchEngine:
         )
         try:
             with ProofVerifier(self.config.final_check_timeout) as verifier:
-                rejected = play_game(
+                rejection = play_game(
                     self.config,
                     game,
                     self._batcher,
@@ -310,4 +310,4 @@ class ParallelSearchEngine:
 
         duration = perf_counter() - started
         game.timings.total_seconds = duration
-        return SearchResult(request, game, rejected, duration)
+        return SearchResult(request, game, rejection, duration)

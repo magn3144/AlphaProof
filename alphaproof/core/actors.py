@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from enum import Enum
 from time import perf_counter
 from typing import Dict, List, Protocol
 
@@ -33,6 +34,13 @@ class TacticSampler(Protocol):
         ...
 
 
+class ObjectiveRejection(Enum):
+    """The part of a theorem objective that Lean could not initialize."""
+
+    THEOREM = 'theorem'
+    DISPROOF = 'disproof'
+
+
 # Each game is produced by starting from the initial Lean state, and executing
 # Monte Carlo tree search to find a proof. If one is found, we extract from the
 # search tree the state-tactic-value transitions in the proof, which are added
@@ -43,15 +51,15 @@ def play_game(
         network: TacticSampler,
         verifier: ProofVerifier,
         stop_on_solution: bool = True,
-) -> bool:
-    """Run one theorem episode and return whether Lean rejected its objective."""
+) -> ObjectiveRejection | None:
+    """Run one theorem episode and return any rejected objective component."""
     setup_start = perf_counter()
     with config.environment_ctor() as environment:
         try:
             state = environment.initial_state(game.theorem)
         except LeanInteractionException as error:
             game.error = str(error)
-            return True
+            return ObjectiveRejection.THEOREM
         if game.disprove:
             try:
                 state = environment.step(
@@ -61,7 +69,7 @@ def play_game(
                 )
             except (LeanInteractionException, ValueError) as error:
                 game.error = str(error)
-                return True
+                return ObjectiveRejection.DISPROOF
         game.timings.setup_seconds = perf_counter() - setup_start
         game.root = Node(
                 action=None,
@@ -96,7 +104,7 @@ def play_game(
             )
         except TacticDeadlineExceeded as error:
             game.error = str(error)
-            return False
+            return None
 
     if game.root.is_optimal:
         # Perform final check to ensure the proof is valid.
@@ -115,7 +123,7 @@ def play_game(
             # Compute value targets for the proof.
             compute_value_target(game.root)
 
-    return False
+    return None
 
 
 # Core Monte Carlo tree search algorithm.

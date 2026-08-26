@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from alphaproof.core.actors import ObjectiveRejection
 from alphaproof.core.config import Config
 from alphaproof.core.network import Network
 from alphaproof.inference.parallel import (
@@ -74,10 +75,17 @@ def run_actor_phase(
 
         def handle_result(result: SearchResult) -> bool:
             game = result.game
-            if result.rejected:
+            if result.rejection is ObjectiveRejection.THEOREM:
                 matchmaker.reject_theorem(game.theorem)
                 print(
-                    'Rejected theorem that Lean could not initialize or negate: '
+                    f'Rejected theorem that Lean could not initialize: {game.theorem}',
+                    flush=True,
+                )
+                return False
+            if result.rejection is ObjectiveRejection.DISPROOF:
+                matchmaker.reject_disproof(game.theorem)
+                print(
+                    f'Rejected disproof objective that Lean could not initialize: '
                     f'{game.theorem}',
                     flush=True,
                 )

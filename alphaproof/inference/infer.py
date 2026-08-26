@@ -224,10 +224,10 @@ def main() -> None:
             game = search_result.game
             proof_lines = (
                 extract_proof_script(game.root)
-                if game.root.is_optimal
+                if game.root is not None and game.root.is_optimal
                 else None
             )
-            status = 'rejected' if search_result.rejected else (
+            status = 'rejected' if search_result.rejection is not None else (
                 'proved' if proof_lines is not None else 'failed'
             )
             result = {
@@ -242,7 +242,7 @@ def main() -> None:
                 'duration_seconds': search_result.duration_seconds,
                 'tree': (
                     None
-                    if search_result.rejected
+                    if search_result.rejection is not None
                     else serialize_search_tree(game.root)
                 ),
             }

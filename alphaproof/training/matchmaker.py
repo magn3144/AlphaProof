@@ -23,6 +23,7 @@ class Matchmaker:
         # Result is True iff the attempt was successful.
         attempts: list[tuple[bool, bool]] = dataclasses.field(default_factory=list)
         invalid: bool = False
+        disprove_invalid: bool = False
 
         def update(self, game: Game):
             """Update statistics with the results of a game."""
@@ -89,6 +90,7 @@ class Matchmaker:
                                     for disprove, success in record.get('attempts', [])
                             ],
                             invalid=bool(record['invalid']),
+                            disprove_invalid=bool(record['disprove_invalid']),
                     )
         return theorem_stats
 
@@ -103,6 +105,7 @@ class Matchmaker:
                                 for disprove, success in stats.attempts
                         ],
                         'invalid': stats.invalid,
+                        'disprove_invalid': stats.disprove_invalid,
                 }
                 for theorem, stats in self.theorem_stats.items()
         ]
@@ -134,7 +137,10 @@ class Matchmaker:
         [(theorem, stats)] = random.choices(
                 list(self.theorem_stats.items()), weights, k=1
         )
-        disprove = random.random() < self.config.mm_disprove_rate
+        disprove = (
+                not stats.disprove_invalid
+                and random.random() < self.config.mm_disprove_rate
+        )
         num_simulations = self.compute_num_simulations(theorem, stats)
         return Game(
                 theorem=theorem, disprove=disprove, num_simulations=num_simulations
@@ -148,4 +154,9 @@ class Matchmaker:
     def reject_theorem(self, theorem: Theorem) -> None:
         """Permanently reject a theorem that Lean cannot initialize."""
         self.theorem_stats[theorem].invalid = True
+        self._save_theorem_stats()
+
+    def reject_disproof(self, theorem: Theorem) -> None:
+        """Permanently reject disproof attempts for a theorem."""
+        self.theorem_stats[theorem].disprove_invalid = True
         self._save_theorem_stats()
