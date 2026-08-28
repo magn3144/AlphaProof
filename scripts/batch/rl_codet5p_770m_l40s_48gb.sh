@@ -3,7 +3,7 @@
 #BSUB -J rl_codet5p_770m_l40s
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
-#BSUB -R "rusage[mem=2GB]"
+#BSUB -R "rusage[mem=4GB]"
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 24:00
 #BSUB -o scripts/batch/logs/rl_codet5p_770m_l40s_%J.out
@@ -24,7 +24,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_770m_l40s_48gb_mixed_01}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_770m_l40s_48gb_mixed_96actors_01}"
 
 nvidia-smi
 uv sync --frozen
