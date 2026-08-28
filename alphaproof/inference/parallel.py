@@ -3,11 +3,12 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from threading import Condition, Thread
+from threading import Barrier, Condition, Lock, Thread, local
 from time import perf_counter
 
 from alphaproof.core.actors import ObjectiveRejection, play_game
 from alphaproof.core.config import Config
+from alphaproof.core.environment import Environment
 from alphaproof.core.game import Game, ProofVerifier
 from alphaproof.core.network import Network, NetworkSamplingOutput
 
@@ -110,18 +111,31 @@ class _InferenceBatcher:
     def stats(self) -> InferenceBatchStats:
         """Return aggregate batching measurements."""
         with self._condition:
-            average = (
-                self._request_count / self._batch_count
-                if self._batch_count
-                else 0.0
-            )
-            return InferenceBatchStats(
-                batch_count=self._batch_count,
-                request_count=self._request_count,
-                average_batch_size=average,
-                queue_wait_seconds=self._queue_wait_seconds,
-                model_seconds=self._model_seconds,
-            )
+            return self._stats()
+
+    def take_stats(self) -> InferenceBatchStats:
+        """Return and clear measurements for one completed search phase."""
+        with self._condition:
+            stats = self._stats()
+            self._batch_count = 0
+            self._request_count = 0
+            self._queue_wait_seconds = 0.0
+            self._model_seconds = 0.0
+            return stats
+
+    def _stats(self) -> InferenceBatchStats:
+        average = (
+            self._request_count / self._batch_count
+            if self._batch_count
+            else 0.0
+        )
+        return InferenceBatchStats(
+            batch_count=self._batch_count,
+            request_count=self._request_count,
+            average_batch_size=average,
+            queue_wait_seconds=self._queue_wait_seconds,
+            model_seconds=self._model_seconds,
+        )
 
     def _run(self) -> None:
         while True:
@@ -180,6 +194,24 @@ class _InferenceBatcher:
             self._condition.notify_all()
 
 
+@dataclass
+class _SearchWorker:
+    """Thread-affine Lean resources reused across proof games."""
+
+    event_loop: asyncio.AbstractEventLoop
+    environment: Environment
+    verifier: ProofVerifier
+
+    def close(self) -> None:
+        """Close Lean resources and the owning thread's event loop."""
+        try:
+            self.verifier.close()
+        finally:
+            self.environment.close()
+            asyncio.set_event_loop(None)
+            self.event_loop.close()
+
+
 class ParallelSearchEngine:
     """Run independent MCTS searches around one batched GPU model."""
 
@@ -192,10 +224,19 @@ class ParallelSearchEngine:
             raise ValueError('Parallel search count must be positive.')
         self.config = config
         self.parallel_searches = config.num_actors
+        self._worker_local = local()
+        self._workers: list[_SearchWorker] = []
+        self._workers_lock = Lock()
+        self._closed = False
         self._batcher = _InferenceBatcher(
             network,
             min(config.inference_batch_size, config.num_actors),
             config.inference_batch_timeout,
+        )
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.parallel_searches,
+            thread_name_prefix='AlphaProofSearch',
+            initializer=self._initialize_worker,
         )
 
     def __enter__(self):
@@ -209,9 +250,66 @@ class ParallelSearchEngine:
         """Return aggregate inference measurements for this engine."""
         return self._batcher.stats()
 
+    def take_inference_stats(self) -> InferenceBatchStats:
+        """Return and clear inference measurements for the completed phase."""
+        return self._batcher.take_stats()
+
     def close(self) -> None:
-        """Release the inference batching thread."""
-        self._batcher.close()
+        """Release persistent actor resources and the inference thread."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._batcher.close()
+        finally:
+            try:
+                self._close_workers()
+            finally:
+                self._executor.shutdown(wait=True, cancel_futures=True)
+
+    def _initialize_worker(self) -> None:
+        """Create one reusable Lean environment on an executor thread."""
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+        try:
+            worker = _SearchWorker(
+                event_loop,
+                self.config.environment_ctor(),
+                ProofVerifier(self.config.final_check_timeout),
+            )
+        except BaseException:
+            asyncio.set_event_loop(None)
+            event_loop.close()
+            raise
+        self._worker_local.worker = worker
+        with self._workers_lock:
+            self._workers.append(worker)
+
+    def _close_workers(self) -> None:
+        """Close every worker from the thread that owns its event loop."""
+        with self._workers_lock:
+            num_workers = len(self._workers)
+        if num_workers == 0:
+            return
+
+        barrier = Barrier(num_workers)
+
+        def close_worker() -> None:
+            barrier.wait()
+            self._current_worker().close()
+
+        futures = [
+            self._executor.submit(close_worker)
+            for _ in range(num_workers)
+        ]
+        for future in futures:
+            future.result()
+
+    def _current_worker(self) -> _SearchWorker:
+        worker = getattr(self._worker_local, 'worker', None)
+        if not isinstance(worker, _SearchWorker):
+            raise RuntimeError('Search worker was not initialized.')
+        return worker
 
     def search(self, requests: list[SearchRequest]) -> list[SearchResult]:
         """Run requests with bounded concurrency and preserve input order."""
@@ -257,10 +355,6 @@ class ParallelSearchEngine:
         if num_results < 1:
             return
 
-        executor = ThreadPoolExecutor(
-            max_workers=self.parallel_searches,
-            thread_name_prefix='AlphaProofSearch',
-        )
         active: set[Future[SearchResult]] = set()
         accepted = 0
 
@@ -269,7 +363,9 @@ class ParallelSearchEngine:
                 len(active) < self.parallel_searches
                 and accepted + len(active) < num_results
             ):
-                active.add(executor.submit(self._search_one, request_factory()))
+                active.add(
+                    self._executor.submit(self._search_one, request_factory())
+                )
 
         try:
             fill_slots()
@@ -282,31 +378,25 @@ class ParallelSearchEngine:
         except BaseException:
             for future in active:
                 future.cancel()
-            executor.shutdown(wait=True, cancel_futures=True)
+            wait(active)
             raise
-        executor.shutdown(wait=True)
 
     def _search_one(self, request: SearchRequest) -> SearchResult:
         started = perf_counter()
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
+        worker = self._current_worker()
         game = Game(
             request.theorem,
             request.disprove,
             request.num_simulations,
         )
-        try:
-            with ProofVerifier(self.config.final_check_timeout) as verifier:
-                rejection = play_game(
-                    self.config,
-                    game,
-                    self._batcher,
-                    verifier,
-                    stop_on_solution=request.stop_on_solution,
-                )
-        finally:
-            asyncio.set_event_loop(None)
-            event_loop.close()
+        rejection = play_game(
+            self.config,
+            game,
+            self._batcher,
+            worker.environment,
+            worker.verifier,
+            stop_on_solution=request.stop_on_solution,
+        )
 
         duration = perf_counter() - started
         game.timings.total_seconds = duration

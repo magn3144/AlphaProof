@@ -4,7 +4,6 @@ from pathlib import Path
 
 from alphaproof.core.config import Config
 from alphaproof.core.game import Game
-from alphaproof.core.network import Network
 from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
 
 
@@ -46,7 +45,7 @@ def load_validation_theorems(
 
 def validate_theorems(
     config: Config,
-    network: Network,
+    engine: ParallelSearchEngine,
     theorems: list[str],
 ) -> list[Game]:
     """Search the fixed validation theorem set without training side effects."""
@@ -60,5 +59,4 @@ def validate_theorems(
         )
         for index, theorem in enumerate(theorems)
     ]
-    with ParallelSearchEngine(config, network) as engine:
-        return [result.game for result in engine.search(requests)]
+    return [result.game for result in engine.search(requests)]

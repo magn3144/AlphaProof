@@ -2,7 +2,6 @@ from pathlib import Path
 
 from alphaproof.core.actors import ObjectiveRejection
 from alphaproof.core.config import Config
-from alphaproof.core.network import Network
 from alphaproof.inference.parallel import (
     ParallelSearchEngine,
     SearchRequest,
@@ -19,7 +18,7 @@ from alphaproof.training.validation import (
 
 def run_validation_if_due(
     config: Config,
-    network: Network,
+    engine: ParallelSearchEngine,
     logger: RunLogger,
     validation_theorems: list[str],
 ) -> None:
@@ -32,15 +31,16 @@ def run_validation_if_due(
     ):
         logger.log_validation(
             game,
-            validate_theorems(config, network, validation_theorems),
+            validate_theorems(config, engine, validation_theorems),
         )
+        engine.take_inference_stats()
 
 
 def run_actor_phase(
     config: Config,
     run_dir: Path,
     resume: bool,
-    network: Network,
+    engine: ParallelSearchEngine,
     replay_buffer: ReplayBuffer,
     matchmaker: Matchmaker,
     logger: RunLogger,
@@ -48,7 +48,7 @@ def run_actor_phase(
 ) -> None:
     """Run independently assigned searches to a target game count."""
     validation_theorems = load_validation_theorems(config, run_dir, resume)
-    run_validation_if_due(config, network, logger, validation_theorems)
+    run_validation_if_due(config, engine, logger, validation_theorems)
     next_request = logger.games_completed + 1
 
     while logger.games_completed < game_target:
@@ -97,12 +97,11 @@ def run_actor_phase(
             logger.log_game(game, len(replay_buffer))
             return True
 
-        with ParallelSearchEngine(config, network) as engine:
-            engine.search_continuously(
-                make_request,
-                handle_result,
-                boundary - logger.games_completed,
-            )
+        engine.search_continuously(
+            make_request,
+            handle_result,
+            boundary - logger.games_completed,
+        )
 
-        logger.log_inference(engine.inference_stats)
-        run_validation_if_due(config, network, logger, validation_theorems)
+        logger.log_inference(engine.take_inference_stats())
+        run_validation_if_due(config, engine, logger, validation_theorems)

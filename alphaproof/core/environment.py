@@ -5,6 +5,10 @@ from typing import Any, Callable, Dict, List, TypeAlias
 
 from alphaproof.core.helper import negate_theorem
 from leantree import LeanProject, LeanTactic, LeanProofState
+from leantree.repl_adapter.interaction import (
+    LeanEnvironmentCheckpoint,
+    LeanProcessException,
+)
 from leantree.utils import to_sync
 
 
@@ -86,6 +90,8 @@ class Environment:
         self._env = self.project.environment()
         self._env.__enter__()
         self._sent_imports = False
+        self._checkpoint: LeanEnvironmentCheckpoint | None = None
+        self._failed = False
         self._next_state_id = -1
         self._branches: dict[int, Any] = {}
         self._theorems: dict[int, Theorem] = {}
@@ -93,6 +99,22 @@ class Environment:
     def close(self) -> None:
         """Stop the underlying Lean process."""
         self._env.stop_safe()
+
+    def reset(self) -> None:
+        """Restore the imported Lean state for the next proof game."""
+        if self._failed:
+            self._env.stop_safe()
+            self._env = self.project.environment()
+            self._env.__enter__()
+            self._sent_imports = False
+            self._checkpoint = None
+            self._failed = False
+        elif self._checkpoint is not None:
+            self._env.rollback_to(self._checkpoint)
+
+        self._next_state_id = -1
+        self._branches.clear()
+        self._theorems.clear()
 
     def __enter__(self):
         return self
@@ -108,9 +130,14 @@ class Environment:
         """Send configured imports once per Lean process."""
         if self._sent_imports:
             return
-        for module in self.imports:
-            self._env.send_command(f'import {module}', timeout=900.0)
+        try:
+            for module in self.imports:
+                self._env.send_command(f'import {module}', timeout=900.0)
+        except LeanProcessException:
+            self._failed = True
+            raise
         self._sent_imports = True
+        self._checkpoint = self._env.checkpoint()
 
     def _state_from_branch(
         self,
@@ -168,7 +195,11 @@ class Environment:
     def initial_state(self, theorem: Theorem) -> State:
         """Returns the initial tactic state."""
         self._send_imports()
-        branch = self._env.proof_from_sorry(theorem)
+        try:
+            branch = self._env.proof_from_sorry(theorem)
+        except LeanProcessException:
+            self._failed = True
+            raise
         return self._state_from_branch(branch, theorem=theorem)
 
     def step(
@@ -188,7 +219,11 @@ class Environment:
             if state_id not in self._theorems:
                 raise ValueError('Can only disprove from an initial theorem state.')
             theorem = negate_theorem(self._theorems[state_id])
-            branch = self._env.proof_from_sorry(theorem)
+            try:
+                branch = self._env.proof_from_sorry(theorem)
+            except LeanProcessException:
+                self._failed = True
+                raise
             return self._state_from_branch(branch, theorem=theorem)
 
         if tactic.startswith('focus_goal '):
@@ -216,6 +251,10 @@ class Environment:
                 tactic_timeout,
             )
         except TacticDeadlineExceeded:
+            self._failed = True
+            raise
+        except LeanProcessException:
+            self._failed = True
             raise
         except Exception as exc:
             raise ValueError(f'Invalid tactic {tactic!r}: {exc}') from exc

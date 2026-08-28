@@ -23,7 +23,10 @@ from alphaproof.core.game import (
 )
 from alphaproof.core.timing import GameTimings
 from alphaproof.core.network import NetworkSamplingOutput
-from leantree.repl_adapter.interaction import LeanInteractionException
+from leantree.repl_adapter.interaction import (
+    LeanInteractionException,
+    LeanProcessException,
+)
 
 
 class TacticSampler(Protocol):
@@ -49,17 +52,21 @@ def play_game(
         config: Config,
         game: Game,
         network: TacticSampler,
+        environment: Environment,
         verifier: ProofVerifier,
         stop_on_solution: bool = True,
 ) -> ObjectiveRejection | None:
     """Run one theorem episode and return any rejected objective component."""
     setup_start = perf_counter()
-    with config.environment_ctor() as environment:
+    try:
         try:
             state = environment.initial_state(game.theorem)
         except LeanInteractionException as error:
             game.error = str(error)
             return ObjectiveRejection.THEOREM
+        except LeanProcessException as error:
+            game.error = str(error)
+            return None
         if game.disprove:
             try:
                 state = environment.step(
@@ -70,6 +77,9 @@ def play_game(
             except (LeanInteractionException, ValueError) as error:
                 game.error = str(error)
                 return ObjectiveRejection.DISPROOF
+            except LeanProcessException as error:
+                game.error = str(error)
+                return None
         game.timings.setup_seconds = perf_counter() - setup_start
         game.root = Node(
                 action=None,
@@ -102,9 +112,11 @@ def play_game(
                 environment,
                 stop_on_solution=stop_on_solution,
             )
-        except TacticDeadlineExceeded as error:
+        except (TacticDeadlineExceeded, LeanProcessException) as error:
             game.error = str(error)
             return None
+    finally:
+        environment.reset()
 
     if game.root.is_optimal:
         # Perform final check to ensure the proof is valid.

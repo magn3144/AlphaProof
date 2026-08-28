@@ -11,6 +11,7 @@ import torch
 from alphaproof.core.config import Config, RL_PRECISIONS
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
+from alphaproof.inference.parallel import ParallelSearchEngine
 from alphaproof.training.actor_phase import run_actor_phase
 from alphaproof.training.matchmaker import Matchmaker
 from alphaproof.training.randomness import seed_everything
@@ -108,34 +109,35 @@ def alphaproof_train(
     steps_per_iteration = config.training_steps // config.training_iterations
     step = start_step
 
-    for iteration in range(config.training_iterations):
-        game_target = (iteration + 1) * games_per_iteration
-        run_actor_phase(
-            config,
-            run_dir,
-            resume,
-            network,
-            replay_buffer,
-            matchmaker,
-            logger,
-            game_target,
-        )
-
-        step_target = (iteration + 1) * steps_per_iteration
-        steps_to_run = step_target - step
-        if (
-            steps_to_run > 0
-            and len(replay_buffer) >= replay_buffer.replay_batch_size
-        ):
-            step = train_network(
+    with ParallelSearchEngine(config, network) as engine:
+        for iteration in range(config.training_iterations):
+            game_target = (iteration + 1) * games_per_iteration
+            run_actor_phase(
                 config,
-                network,
-                storage,
+                run_dir,
+                resume,
+                engine,
                 replay_buffer,
-                step,
-                steps_to_run,
+                matchmaker,
                 logger,
+                game_target,
             )
+
+            step_target = (iteration + 1) * steps_per_iteration
+            steps_to_run = step_target - step
+            if (
+                steps_to_run > 0
+                and len(replay_buffer) >= replay_buffer.replay_batch_size
+            ):
+                step = train_network(
+                    config,
+                    network,
+                    storage,
+                    replay_buffer,
+                    step,
+                    steps_to_run,
+                    logger,
+                )
 
     if step % config.checkpoint_interval != 0:
         storage.save_checkpoint(step, network)
