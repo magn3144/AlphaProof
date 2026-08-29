@@ -68,12 +68,18 @@ class RunLogger:
         self.diagnostics = RunDiagnostics(run_dir)
         successes, rewards, proved_theorems = self._load_results()
         self.games_completed = len(successes)
+        self.actor_requests_started = self.games_completed
         self.proved_theorems = proved_theorems
         self.recent_successes = deque(
             successes[-reward_window:], maxlen=reward_window
         )
         self.recent_rewards = deque(rewards[-reward_window:], maxlen=reward_window)
         self.validation_games = self._load_validation_games()
+
+    def next_actor_request_id(self) -> str:
+        """Return a unique actor request identifier for this process."""
+        self.actor_requests_started += 1
+        return f'train-{self.actor_requests_started}'
 
     def log_game_start(self, request_id: str, game: Game) -> None:
         """Persist the game being started before Lean is launched."""

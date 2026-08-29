@@ -1,6 +1,5 @@
 import asyncio
 from collections import deque
-from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from threading import Barrier, Condition, Lock, Thread, local
@@ -70,6 +69,8 @@ class _InferenceBatcher:
         self.timeout = timeout
         self._condition = Condition()
         self._pending: deque[_InferenceRequest] = deque()
+        self._paused = False
+        self._running = False
         self._closed = False
         self._error: BaseException | None = None
         self._batch_count = 0
@@ -108,6 +109,23 @@ class _InferenceBatcher:
             self._condition.notify_all()
         self._thread.join()
 
+    def pause(self) -> None:
+        """Pause before the next model batch and wait for inference to stop."""
+        with self._condition:
+            self._paused = True
+            self._condition.notify_all()
+            while self._running:
+                self._condition.wait()
+
+    def resume(self) -> None:
+        """Allow queued inference requests to continue."""
+        with self._condition:
+            resumed_at = perf_counter()
+            for request in self._pending:
+                request.queued_at = resumed_at
+            self._paused = False
+            self._condition.notify_all()
+
     def stats(self) -> InferenceBatchStats:
         """Return aggregate batching measurements."""
         with self._condition:
@@ -140,7 +158,7 @@ class _InferenceBatcher:
     def _run(self) -> None:
         while True:
             with self._condition:
-                while not self._pending and not self._closed:
+                while (not self._pending or self._paused) and not self._closed:
                     self._condition.wait()
                 if self._closed:
                     return
@@ -153,11 +171,17 @@ class _InferenceBatcher:
                     self._condition.wait(remaining)
                     if self._closed:
                         return
+                    if self._paused:
+                        break
+
+                if self._paused:
+                    continue
 
                 batch = [
                     self._pending.popleft()
                     for _ in range(min(self.max_batch_size, len(self._pending)))
                 ]
+                self._running = True
                 started = perf_counter()
                 self._queue_wait_seconds += sum(
                     started - request.queued_at for request in batch
@@ -174,9 +198,11 @@ class _InferenceBatcher:
                 return
 
             with self._condition:
+                self._running = False
                 self._batch_count += 1
                 self._request_count += len(batch)
                 self._model_seconds += model_seconds
+                self._condition.notify_all()
             for request, output in zip(batch, outputs):
                 request.future.set_result(output)
 
@@ -186,6 +212,7 @@ class _InferenceBatcher:
         batch: list[_InferenceRequest],
     ) -> None:
         with self._condition:
+            self._running = False
             self._error = error
             for request in batch:
                 request.future.set_exception(error)
@@ -228,6 +255,8 @@ class ParallelSearchEngine:
         self._workers: list[_SearchWorker] = []
         self._workers_lock = Lock()
         self._closed = False
+        self._continuous_active: set[Future[SearchResult]] = set()
+        self._continuous_completed: deque[SearchResult] = deque()
         self._batcher = _InferenceBatcher(
             network,
             min(config.inference_batch_size, config.num_actors),
@@ -253,6 +282,14 @@ class ParallelSearchEngine:
     def take_inference_stats(self) -> InferenceBatchStats:
         """Return and clear inference measurements for the completed phase."""
         return self._batcher.take_stats()
+
+    def pause(self) -> None:
+        """Pause model inference while preserving in-flight searches."""
+        self._batcher.pause()
+
+    def resume(self) -> None:
+        """Resume model inference for preserved searches."""
+        self._batcher.resume()
 
     def close(self) -> None:
         """Release persistent actor resources and the inference thread."""
@@ -316,70 +353,65 @@ class ParallelSearchEngine:
         if not requests:
             return []
 
-        request_indices: dict[int, deque[int]] = {}
-        for index, request in enumerate(requests):
-            request_indices.setdefault(id(request), deque()).append(index)
-        request_iterator = iter(requests)
         results: list[SearchResult | None] = [None] * len(requests)
-
-        def store_result(result: SearchResult) -> bool:
-            index = request_indices[id(result.request)].popleft()
-            results[index] = result
-            return True
-
-        self._run_searches(
-            lambda: next(request_iterator),
-            store_result,
-            len(requests),
-        )
-        if any(result is None for result in results):
-            raise RuntimeError('Parallel search completed without every result.')
-        return [result for result in results if result is not None]
-
-    def search_continuously(
-        self,
-        request_factory: Callable[[], SearchRequest],
-        handle_result: Callable[[SearchResult], bool],
-        num_results: int,
-    ) -> None:
-        """Keep all search slots occupied until enough results are accepted."""
-        self._run_searches(request_factory, handle_result, num_results)
-
-    def _run_searches(
-        self,
-        request_factory: Callable[[], SearchRequest],
-        handle_result: Callable[[SearchResult], bool],
-        num_results: int,
-    ) -> None:
-        """Run dynamic requests until enough results are accepted."""
-        if num_results < 1:
-            return
-
-        active: set[Future[SearchResult]] = set()
-        accepted = 0
-
-        def fill_slots() -> None:
-            while (
-                len(active) < self.parallel_searches
-                and accepted + len(active) < num_results
-            ):
-                active.add(
-                    self._executor.submit(self._search_one, request_factory())
-                )
+        active: dict[Future[SearchResult], int] = {}
+        next_index = 0
+        while next_index < min(self.parallel_searches, len(requests)):
+            future = self._executor.submit(
+                self._search_one,
+                requests[next_index],
+            )
+            active[future] = next_index
+            next_index += 1
 
         try:
-            fill_slots()
             while active:
                 done, _ = wait(active, return_when=FIRST_COMPLETED)
                 for future in done:
-                    active.remove(future)
-                    accepted += int(handle_result(future.result()))
-                    fill_slots()
+                    results[active.pop(future)] = future.result()
+                    if next_index < len(requests):
+                        next_future = self._executor.submit(
+                            self._search_one,
+                            requests[next_index],
+                        )
+                        active[next_future] = next_index
+                        next_index += 1
         except BaseException:
             for future in active:
                 future.cancel()
             wait(active)
             raise
+
+        if any(result is None for result in results):
+            raise RuntimeError('Parallel search completed without every result.')
+        return [result for result in results if result is not None]
+
+    @property
+    def num_searches(self) -> int:
+        """Return the number of running or completed continuous searches."""
+        return len(self._continuous_active) + len(self._continuous_completed)
+
+    def submit(self, request: SearchRequest) -> None:
+        """Submit one continuous search without exceeding actor capacity."""
+        if self.num_searches >= self.parallel_searches:
+            raise RuntimeError('All parallel search slots are occupied.')
+        self._continuous_active.add(
+            self._executor.submit(self._search_one, request)
+        )
+
+    def next_result(self) -> SearchResult:
+        """Return the next continuous result, retaining other completed results."""
+        if not self._continuous_completed:
+            if not self._continuous_active:
+                raise RuntimeError('No continuous searches have been submitted.')
+            done, _ = wait(
+                self._continuous_active,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                self._continuous_active.remove(future)
+                self._continuous_completed.append(future.result())
+        return self._continuous_completed.popleft()
 
     def _search_one(self, request: SearchRequest) -> SearchResult:
         started = perf_counter()

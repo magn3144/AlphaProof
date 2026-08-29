@@ -109,7 +109,10 @@ def alphaproof_train(
     steps_per_iteration = config.training_steps // config.training_iterations
     step = start_step
 
-    with ParallelSearchEngine(config, network) as engine:
+    with (
+        ParallelSearchEngine(config, network) as engine,
+        ParallelSearchEngine(config, network) as validation_engine,
+    ):
         for iteration in range(config.training_iterations):
             game_target = (iteration + 1) * games_per_iteration
             run_actor_phase(
@@ -117,6 +120,7 @@ def alphaproof_train(
                 run_dir,
                 resume,
                 engine,
+                validation_engine,
                 replay_buffer,
                 matchmaker,
                 logger,
@@ -138,6 +142,8 @@ def alphaproof_train(
                     steps_to_run,
                     logger,
                 )
+            if iteration + 1 < config.training_iterations:
+                engine.resume()
 
     if step % config.checkpoint_interval != 0:
         storage.save_checkpoint(step, network)

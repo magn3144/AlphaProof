@@ -8,6 +8,9 @@
 - Backward compatability doesnt matter, it just complicates the code unnecessarily.
 - Dont make fallbacks. Its better to assume that the input to a function always is in the correct format, and just let the code fail if thats not the case.
 - Write code as simple as possible, without complicated structures. If you can remove more code than you write as you complete a task, thats great.
+- Do not pass a function to another function as an argument.
+- When possible functions should only depend on what they take as input.
+- Avoid nested functions.
 - After writing code fix any potential Pylance errors.
 - If CLI Pyright misses VS Code Pylance errors, inspect the VS Code Python Language Server log for interpreter and editable-install resolution issues.
 - Scripts that should only be executed once, like downloading a dataset, should be in the scripts folder.
