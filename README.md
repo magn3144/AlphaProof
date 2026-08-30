@@ -91,18 +91,21 @@ Update `host` in `.vscode/launch.json` if the printed hostname differs, then
 start training and wait for the debugger:
 
 ```bash
-.venv/bin/python -m debugpy \
+CUDA_VISIBLE_DEVICES=1 uv run --with debugpy python -m debugpy \
   --listen 0.0.0.0:5678 \
   --wait-for-client \
   -m alphaproof.training.train \
   rl_debug_01 \
   --dataset-dir data/dataset/codex_theorems \
   --disprove-rate 0 \
-  --num-games 4 \
+  --num-actors 1 \
+  --inference-batch-size 1 \
+  --num-games 1 \
   --num-simulations 16 \
   --training-iterations 1 \
   --training-steps 2 \
-  --batch-size 1
+  --batch-size 2 \
+  --sft-fraction 0.5
 ```
 
 Use a new run name for a fresh run. In VS Code, set breakpoints, open **Run and
@@ -113,8 +116,10 @@ continue, and `Shift+F5` to stop.
 
 To continue a stopped run instead of creating a fresh one:
 
+The resumed run reuses the single-actor settings saved by the fresh run.
+
 ```bash
-.venv/bin/python -m debugpy \
+CUDA_VISIBLE_DEVICES=1 uv run --with debugpy python -m debugpy \
   --listen 0.0.0.0:5678 \
   --wait-for-client \
   -m alphaproof.training.train \

@@ -17,6 +17,10 @@
         "data/dataset/codex_theorems",
         "--disprove-rate",
         "0",
+        "--num-actors",
+        "1",
+        "--inference-batch-size",
+        "1",
         "--num-games",
         "1",
         "--num-simulations",
@@ -41,6 +45,16 @@
       "request": "attach",
       "connect": {
         "host": "n-62-20-1",
+        "port": 5678
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "Attach to a100sh training",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "n-62-12-19",
         "port": 5678
       },
       "justMyCode": true
