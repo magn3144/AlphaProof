@@ -1,17 +1,17 @@
-from time import perf_counter
-
-from alphaproof.core.environment import Action, NodeType, Observation, Theorem
+from alphaproof.core.environment import (
+    Action,
+    Environment,
+    NodeType,
+    Observation,
+    Theorem,
+)
 from alphaproof.core.helper import replace_sorry_proof, theorem_for_game, theorem_name
-from alphaproof.core.paths import LEAN_PROJECT_DIR
 from alphaproof.core.timing import GameTimings, is_internal_action
-from leantree import LeanProject, LeanTactic
+from leantree import LeanTactic
 from leantree.repl_adapter.interaction import (
-    LeanEnvironmentCheckpoint,
     LeanInteractionException,
-    LeanProcess,
     LeanProcessException,
 )
-
 
 class Node:
     """Node in the search tree."""
@@ -97,78 +97,6 @@ class Game:
         )
 
 
-class ProofCheckProcessError(Exception):
-    """Raised when the persistent Lean verifier process fails."""
-
-
-class ProofVerifier:
-    """Validate reconstructed proofs in an isolated persistent Lean process."""
-
-    def __init__(self, timeout: float):
-        self.timeout = timeout
-        self.process: LeanProcess | None = None
-        self.checkpoint: LeanEnvironmentCheckpoint | None = None
-        self.last_startup_seconds = 0.0
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-
-    def close(self) -> None:
-        """Close the verifier process if it has been started."""
-        if self.process is not None:
-            self.process.stop_safe()
-            self.process = None
-            self.checkpoint = None
-
-    def verify(self, lean_code: str) -> None:
-        """Raise if Lean rejects the provided declaration or times out."""
-        process = None
-        checkpoint = None
-        self.last_startup_seconds = 0.0
-        try:
-            if self.process is None:
-                start = perf_counter()
-                try:
-                    self._start()
-                finally:
-                    self.last_startup_seconds = perf_counter() - start
-            assert self.process is not None
-            assert self.checkpoint is not None
-
-            process = self.process
-            checkpoint = self.checkpoint
-            response = process.send_command(lean_code, timeout=self.timeout)
-            if any(
-                    'sorryAx' in str(message.get('data', ''))
-                    for message in response.get('messages', [])
-            ):
-                raise LeanInteractionException('Proof depends on sorryAx.')
-        except LeanProcessException as error:
-            self.close()
-            raise ProofCheckProcessError(
-                f'Final proof-check process failed: {error}'
-            ) from error
-        finally:
-            if process is not None and self.process is process:
-                assert checkpoint is not None
-                process.rollback_to(checkpoint)
-
-    def _start(self) -> None:
-        """Start Lean and load the shared verifier environment once."""
-        process = LeanProject(str(LEAN_PROJECT_DIR)).environment()
-        process.__enter__()
-        try:
-            process.send_command('import Mathlib', timeout=self.timeout)
-        except Exception:
-            process.stop_safe()
-            raise
-        self.process = process
-        self.checkpoint = process.checkpoint()
-
-
 def compute_value_target(node: Node) -> float:
     """Computes the actual value for a node, to be used as a target in learning."""
     if node.is_terminal:
@@ -215,8 +143,8 @@ def select_optimal_action(node: Node) -> Action:
 
 def final_check(
         game: Game,
+        environment: Environment,
         timeout: float,
-        verifier: ProofVerifier | None = None,
 ) -> bool:
     """Checks that the proof found is actually valid."""
     game.error = None
@@ -229,13 +157,10 @@ def final_check(
     if name is not None:
         footer = f'\n\n#print axioms {name}'
     lean_code = f'{finished_proof}{footer}'
-    owns_verifier = verifier is None
-    if verifier is None:
-        verifier = ProofVerifier(timeout)
     try:
-        verifier.verify(lean_code)
-    except ProofCheckProcessError as error:
-        game.error = str(error)
+        environment.verify(lean_code, timeout)
+    except LeanProcessException as error:
+        game.error = f'Final proof-check process failed: {error}'
         output = ''
     except LeanInteractionException as error:
         game.error = 'Lean rejected the proof found by search.'
@@ -243,10 +168,6 @@ def final_check(
     else:
         game.final_proof = finished_proof
         return True
-    finally:
-        if owns_verifier:
-            verifier.close()
-
     warning = (
             f'WARNING: {game.error}\n'
             f'Finished proof:\n{finished_proof}'

@@ -16,7 +16,6 @@ from alphaproof.core.environment import (
 from alphaproof.core.game import (
     Game,
     Node,
-    ProofVerifier,
     action_to_tactic,
     compute_value_target,
     final_check,
@@ -53,7 +52,6 @@ def play_game(
         game: Game,
         network: TacticSampler,
         environment: Environment,
-        verifier: ProofVerifier,
         stop_on_solution: bool = True,
 ) -> ObjectiveRejection | None:
     """Run one theorem episode and return any rejected objective component."""
@@ -115,27 +113,25 @@ def play_game(
         except (TacticDeadlineExceeded, LeanProcessException) as error:
             game.error = str(error)
             return None
+        if game.root.is_optimal:
+            # Perform final check to ensure the proof is valid.
+            verification_start = perf_counter()
+            game.root.is_optimal = final_check(
+                    game,
+                    environment,
+                    config.final_check_timeout,
+            )
+            game.timings.final_verification_seconds = (
+                perf_counter() - verification_start
+            )
+            game.timings.final_verification_success = game.root.is_optimal
+            if game.root.is_optimal:
+                # Compute value targets for the proof.
+                compute_value_target(game.root)
+
+        return None
     finally:
         environment.reset()
-
-    if game.root.is_optimal:
-        # Perform final check to ensure the proof is valid.
-        verification_start = perf_counter()
-        game.root.is_optimal = final_check(
-                game,
-                config.final_check_timeout,
-                verifier,
-        )
-        game.timings.final_verification_seconds = (
-            perf_counter() - verification_start
-        )
-        game.timings.verifier_startup_seconds = verifier.last_startup_seconds
-        game.timings.final_verification_success = game.root.is_optimal
-        if game.root.is_optimal:
-            # Compute value targets for the proof.
-            compute_value_target(game.root)
-
-    return None
 
 
 # Core Monte Carlo tree search algorithm.

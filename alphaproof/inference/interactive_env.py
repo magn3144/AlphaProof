@@ -449,6 +449,7 @@ class AgentSession(BaseSession):
                 self.status = 'verifying'
                 verified = final_check(
                         self.game,
+                        environment,
                         self.config.final_check_timeout,
                 )
                 self.game.root.is_optimal = verified

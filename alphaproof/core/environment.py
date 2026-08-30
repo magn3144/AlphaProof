@@ -7,6 +7,7 @@ from alphaproof.core.helper import negate_theorem
 from leantree import LeanProject, LeanTactic, LeanProofState
 from leantree.repl_adapter.interaction import (
     LeanEnvironmentCheckpoint,
+    LeanInteractionException,
     LeanProcessException,
 )
 from leantree.utils import to_sync
@@ -115,6 +116,24 @@ class Environment:
         self._next_state_id = -1
         self._branches.clear()
         self._theorems.clear()
+
+    def verify(self, lean_code: str, timeout: float) -> None:
+        """Verify Lean code from the imported environment checkpoint."""
+        checkpoint = self._checkpoint
+        assert checkpoint is not None
+        self._env.rollback_to(checkpoint)
+        try:
+            response = self._env.send_command(lean_code, timeout=timeout)
+            if any(
+                    'sorryAx' in str(message.get('data', ''))
+                    for message in response.get('messages', [])
+            ):
+                raise LeanInteractionException('Proof depends on sorryAx.')
+        except LeanProcessException:
+            self._failed = True
+            raise
+        finally:
+            self._env.rollback_to(checkpoint)
 
     def __enter__(self):
         return self

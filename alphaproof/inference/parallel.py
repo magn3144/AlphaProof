@@ -8,7 +8,7 @@ from time import perf_counter
 from alphaproof.core.actors import ObjectiveRejection, play_game
 from alphaproof.core.config import Config
 from alphaproof.core.environment import Environment
-from alphaproof.core.game import Game, ProofVerifier
+from alphaproof.core.game import Game
 from alphaproof.core.network import Network, NetworkSamplingOutput
 
 
@@ -227,16 +227,12 @@ class _SearchWorker:
 
     event_loop: asyncio.AbstractEventLoop
     environment: Environment
-    verifier: ProofVerifier
 
     def close(self) -> None:
         """Close Lean resources and the owning thread's event loop."""
-        try:
-            self.verifier.close()
-        finally:
-            self.environment.close()
-            asyncio.set_event_loop(None)
-            self.event_loop.close()
+        self.environment.close()
+        asyncio.set_event_loop(None)
+        self.event_loop.close()
 
 
 class ParallelSearchEngine:
@@ -312,7 +308,6 @@ class ParallelSearchEngine:
             worker = _SearchWorker(
                 event_loop,
                 self.config.environment_ctor(),
-                ProofVerifier(self.config.final_check_timeout),
             )
         except BaseException:
             asyncio.set_event_loop(None)
@@ -426,7 +421,6 @@ class ParallelSearchEngine:
             game,
             self._batcher,
             worker.environment,
-            worker.verifier,
             stop_on_solution=request.stop_on_solution,
         )
 

@@ -46,7 +46,6 @@ class GameTimings:
         self.internal_action_count = 0
         self.internal_action_seconds = 0.0
         self.final_verification_seconds: float | None = None
-        self.verifier_startup_seconds = 0.0
         self.final_verification_success = False
 
     @property
@@ -97,7 +96,6 @@ class GameTimings:
         if self.final_verification_seconds is not None:
             final_verification = {
                 'seconds': self.final_verification_seconds,
-                'verifier_startup_seconds': self.verifier_startup_seconds,
                 'success': self.final_verification_success,
             }
         return {

@@ -155,9 +155,6 @@ class RunLogger:
             metrics['actor/final_verification_seconds'] = (
                 game.timings.final_verification_seconds
             )
-            metrics['actor/verifier_startup_seconds'] = (
-                game.timings.verifier_startup_seconds
-            )
         if reward is not None:
             metrics['actor/episode_reward'] = reward
         if rolling_reward is not None:
