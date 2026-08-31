@@ -31,10 +31,10 @@ uv sync --frozen
 
 if [ -f "data/runs/${RUN_NAME}/config.json" ]; then
     echo "Resuming existing RL run ${RUN_NAME}."
-    set -- -m alphaproof.training.train "${RUN_NAME}" --resume
+    set -- -m alphaproof/training/rl_cli.py "${RUN_NAME}" --resume
 else
     echo "Starting new RL run ${RUN_NAME}."
-    set -- -m alphaproof.training.train \
+    set -- -m alphaproof/training/rl_cli.py \
         "${RUN_NAME}" \
         alphaproof/yaml/codet5p_770m_l40s.yaml
 fi
