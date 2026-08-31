@@ -20,7 +20,7 @@ sft:
   validation_samples: 512
   wandb_project: alphaproof
   wandb_name: null
-  wandb_mode: disabled
+  wandb_mode: online
   seed: 0
   device: auto
   dtype: bfloat16
@@ -57,14 +57,14 @@ rl:
   validation_batch_size: 10
   validation_interval: 100
   theorem_validation_interval_games: 2400
-  theorem_validation_num_theorems: 20
+  theorem_validation_num_theorems: 384
   log_interval: 10
   reward_window: 100
   wandb_project: alphaproof
-  wandb_entity: null
+  wandb_entity: s204164-danmarks-tekniske-universitet-dtu
   wandb_tags: []
   wandb_name: null
-  wandb_mode: disabled
+  wandb_mode: online
   pb_c_base: 200
   pb_c_init: 0.001
   value_discount: 0.98

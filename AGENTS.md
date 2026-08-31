@@ -52,3 +52,6 @@ They might differ from the pseudocde, which is ok.
   - Data cleaning: Qwen3.6-27B
   - Autoformalization: Goedel-Prover-V2-32B
   - Prover: Salesforce--codet5p-770m
+ - Datasets:
+  - SFT: 1/4 random subset of NanoProof's SFT dataset
+  - RL: 1/3 random subset of NanoProof's RL dataset
