@@ -4,7 +4,7 @@
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
 #BSUB -R "select[gpu40gb]"
-#BSUB -R "rusage[mem=4GB]"
+#BSUB -R "rusage[mem=8GB]"
 #BSUB -gpu "num=2:mode=exclusive_process"
 #BSUB -W 24:00
 #BSUB -o data/runs/rl_codet5p_770m_2x_A100_40gb_01/lsf_%J.out

@@ -3,7 +3,7 @@
 #BSUB -J rl_codet5p_770m_l40s
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
-#BSUB -R "rusage[mem=4GB]"
+#BSUB -R "rusage[mem=8GB]"
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 24:00
 #BSUB -o data/runs/rl_codet5p_770m_l40s_48gb_01/lsf_%J.out
