@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import torch
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import DEFAULT_EXPERIMENT_PATH, load_experiment_config
 from alphaproof.core.network import Network, Params
 from alphaproof.inference.infer import make_config
 from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
@@ -16,7 +16,7 @@ from alphaproof.training.randomness import seed_everything
 
 def parse_args() -> argparse.Namespace:
     """Parse checkpoint evaluation arguments."""
-    defaults = Config()
+    defaults = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
     parser = argparse.ArgumentParser()
     parser.add_argument('run_dir', type=Path)
     parser.add_argument('dataset_path', type=Path)
@@ -159,7 +159,7 @@ def main() -> None:
                     'difficulty': problem['difficulty'],
                     'seed': args.seed,
                     'solved': game.root.is_optimal,
-                    'rejected': search_result.rejected,
+                    'rejected': search_result.rejection is not None,
                     'proof': game.final_proof,
                     'error': game.error,
                     'elapsed_seconds': elapsed_seconds,

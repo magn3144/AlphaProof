@@ -1,184 +1,226 @@
 import secrets
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Literal, cast
+
+import yaml
 
 from alphaproof.core.environment import Environment
-from alphaproof.core.paths import (
-    DATASET_DIR,
-    DEFAULT_THEOREMS_DIR,
-    LEAN_PROJECT_DIR,
-    MODELS_DIR,
-    RUNS_DIR,
-)
+from alphaproof.core.paths import LEAN_PROJECT_DIR, PROJECT_ROOT
 from leantree import LeanProject
 
 
 RL_PRECISIONS = ('float32', 'bfloat16', 'mixed')
+WandbMode = Literal['online', 'offline', 'disabled']
+DEFAULT_EXPERIMENT_PATH = (
+    PROJECT_ROOT / 'alphaproof' / 'yaml' / 'codet5p_770m_l40s.yaml'
+)
 
 
 @dataclass(frozen=True)
 class SFTConfig:
-    """Default supervised fine-tuning hyperparameters."""
+    """Supervised fine-tuning settings loaded from an experiment file."""
 
-    train_input: Path = (
-        DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
-    )
-    validation_input: Path = (
-        DATASET_DIR / 'leantree_mathlib_state_action_pairs.validation.jsonl'
-    )
-    model: Path = MODELS_DIR / 'Salesforce--codet5p-770m'
-    epochs: int = 1
-    checkpoints_per_epoch: int = 1
-    num_pairs: int | None = None
-    num_validation_pairs: int | None = None
-    batch_size: int = 8
-    learning_rate: float = 5e-5
-    value_weight: float = 0.001
-    max_state_length: int = 640
-    max_action_length: int = 128
-    max_grad_norm: float = 1.0
-    log_every: int = 100
-    validation_interval: int = 500
-    validation_samples: int = 512
-    wandb_name: str | None = None
-    wandb_mode: str = 'disabled'
-    seed: int = 0
-    device: str = 'auto'
-    dtype: str = 'bfloat16'
+    train_input: Path
+    validation_input: Path
+    model: Path
+    epochs: int
+    checkpoints_per_epoch: int
+    num_pairs: int | None
+    num_validation_pairs: int | None
+    batch_size: int
+    learning_rate: float
+    value_weight: float
+    max_state_length: int
+    max_action_length: int
+    rollout_max_action_length: int
+    num_sampled_actions: int
+    num_value_bins: int
+    max_grad_norm: float
+    log_every: int
+    validation_interval: int
+    validation_samples: int
+    wandb_project: str
+    wandb_name: str | None
+    wandb_mode: WandbMode
+    seed: int
+    device: str
+    dtype: str
+
+    @property
+    def tokenizer_model(self) -> str:
+        return str(self.model)
+
+    @property
+    def lr(self) -> float:
+        return self.learning_rate
 
 
+@dataclass
 class Config:
-    """Hyperparameters and constructors used by the pseudocode pipeline."""
+    """AlphaProof settings loaded from an experiment file."""
 
-    def __init__(
-        self,
-        num_simulations: int = 64,
-        batch_size: int = 10,
-        num_actors: int = 96,
-        num_games_per_actor: int = 500,
-        inference_batch_size: int = 32,
-        inference_batch_timeout: float = 0.05,
-        num_sampled_actions: int = 6,
-        tactic_timeout: float = 1.0,
-        final_check_timeout: float = 300.0,
-        seed: int | None = None,
-        debug: bool = False,
-        lr: float = 1e-5,
-        dtype: str = 'float32',
-        environment_ctor: Callable[[], Environment] = (
-            lambda: Environment(LeanProject(str(LEAN_PROJECT_DIR)))
-        ),
-        tokenizer_model: str = str(MODELS_DIR / 'Salesforce--codet5p-770m'),
-        dataset_dir: str | Path = DEFAULT_THEOREMS_DIR,
-        sft_dataset_path: str | Path = (
-            DATASET_DIR / 'leantree_mathlib_state_action_pairs.train.jsonl'
-        ),
-        sft_fraction: float = 1 / 10,
-        disprove_rate: float = 0.0,
-        run_id: int | str = 0,
-        sft_run_dir: str | Path | None = (
-            RUNS_DIR / 'sft_codet5p_770m_v100_32gb'
-        ),
-        max_state_length: int = 640,
-        max_action_length: int = 128,
-        rollout_max_action_length: int = 32,
-        training_steps: int = 5_000,
-        training_iterations: int = 500,
-        checkpoint_interval: int = 250,
-        window_size: int = 250_000,
-        value_weight: float = 0.01,
-        validation_fraction: float = 0.05,
-        validation_batch_size: int = 10,
-        validation_interval: int = 100,
-        theorem_validation_interval_games: int = 2_400,
-        theorem_validation_num_theorems: int = 20,
-        log_interval: int = 10,
-        reward_window: int = 100,
-        wandb_project: str = 'alphaproof',
-        wandb_entity: str | None = None,
-        wandb_tags: tuple[str, ...] = (),
-    ):
-        """Populate acting, search, training, and matchmaker settings."""
-        ### Acting
-        self.environment_ctor = environment_ctor
-        self.dataset_dir = Path(dataset_dir)
+    num_simulations: int
+    batch_size: int
+    num_actors: int
+    num_games_per_actor: int
+    inference_batch_size: int
+    inference_batch_timeout: float
+    num_sampled_actions: int
+    tactic_timeout: float
+    final_check_timeout: float
+    seed: int
+    debug: bool
+    lr: float
+    dtype: str
+    tokenizer_model: str
+    dataset_dir: Path
+    sft_dataset_path: Path
+    sft_fraction: float
+    disprove_rate: float
+    sft_run_dir: Path | None
+    max_state_length: int
+    max_action_length: int
+    rollout_max_action_length: int
+    training_steps: int
+    training_iterations: int
+    checkpoint_interval: int
+    window_size: int
+    value_weight: float
+    validation_fraction: float
+    validation_batch_size: int
+    validation_interval: int
+    theorem_validation_interval_games: int
+    theorem_validation_num_theorems: int
+    log_interval: int
+    reward_window: int
+    wandb_project: str
+    wandb_entity: str | None
+    wandb_tags: tuple[str, ...]
+    wandb_name: str | None
+    wandb_mode: WandbMode
+    pb_c_base: float
+    pb_c_init: float
+    value_discount: float
+    prior_temperature: float
+    c_and: float
+    unvisited_value_penalty: float
+    no_legal_actions_value: float
+    ps_c: float
+    ps_alpha: float
+    num_value_bins: int
+    mm_trust_count: int
+    mm_fully_decided_trust_count: int
+    mm_proved_weight: float
+    mm_undecided_weight: float
+    mm_simulation_failure_window: int
+    mm_simulation_failure_multiplier: float
+    mm_max_num_simulations: int
+    run_id: int | str = field(init=False)
+    environment_ctor: Callable[[], Environment] = field(init=False, repr=False)
+    train_dataset_path: Path = field(init=False)
+    validation_dataset_path: Path = field(init=False)
+    test_dataset_path: Path = field(init=False)
+    initial_params_path: Path | None = field(init=False)
+    num_games: int = field(init=False)
+    mm_disprove_rate: float = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.run_id = 0
+        self.environment_ctor = lambda: Environment(
+            LeanProject(str(LEAN_PROJECT_DIR))
+        )
         self.train_dataset_path = self.dataset_dir / 'train.jsonl'
         self.validation_dataset_path = self.dataset_dir / 'validation.jsonl'
         self.test_dataset_path = self.dataset_dir / 'test.jsonl'
-        self.sft_dataset_path = Path(sft_dataset_path)
-        self.sft_run_dir = Path(sft_run_dir) if sft_run_dir is not None else None
+        self.num_games = self.num_games_per_actor
+        self.mm_disprove_rate = self.disprove_rate
         if self.sft_run_dir is None:
-            self.tokenizer_model = tokenizer_model
             self.initial_params_path = None
         else:
             self.tokenizer_model = str(self.sft_run_dir / 'model_source')
             self.initial_params_path = self.sft_run_dir / 'network_params.pt'
-        self.num_actors = num_actors
-        self.num_games = num_games_per_actor
-        self.inference_batch_size = inference_batch_size
-        self.inference_batch_timeout = inference_batch_timeout
-        self.num_simulations = num_simulations
-        self.num_sampled_actions = num_sampled_actions
-        self.seed = secrets.randbits(63) if seed is None else seed
-        self.debug = debug
-        self.tactic_timeout = tactic_timeout
-        self.final_check_timeout = final_check_timeout
 
-        # UCB formula
-        self.pb_c_base = 200
-        self.pb_c_init = 0.001
-        self.value_discount = 0.98
-        self.prior_temperature = 200
-        self.c_and = 64
-        self.unvisited_value_penalty = 16
 
-        # Other MCTS parameters
-        self.no_legal_actions_value = -5
+@dataclass(frozen=True)
+class ExperimentConfig:
+    """Complete SFT and RL configuration for one experiment."""
 
-        # Progressive sampling parameters
-        self.ps_c = 0.1
-        self.ps_alpha = 0.6
+    sft: SFTConfig
+    rl: Config
 
-        # Value predictions
-        self.num_value_bins = 64
 
-        ### Training
-        self.training_steps = training_steps
-        self.training_iterations = training_iterations
-        self.checkpoint_interval = checkpoint_interval
-        self.window_size = window_size
-        self.batch_size = batch_size
-        self.sft_fraction = sft_fraction
-        self.max_state_length = max_state_length
-        self.max_action_length = max_action_length
-        self.lr = lr
-        self.dtype = dtype
-        self.rollout_max_action_length = rollout_max_action_length
-        self.value_weight = value_weight
-        self.validation_fraction = validation_fraction
-        self.validation_batch_size = validation_batch_size
-        self.validation_interval = validation_interval
-        self.theorem_validation_interval_games = (
-            theorem_validation_interval_games
-        )
-        self.theorem_validation_num_theorems = theorem_validation_num_theorems
-        self.log_interval = log_interval
-        self.reward_window = reward_window
+def _resolve_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
-        ### Logging
-        self.wandb_project = wandb_project
-        self.wandb_entity = wandb_entity
-        self.wandb_tags = wandb_tags
 
-        # Matchmaker
-        self.mm_disprove_rate = disprove_rate
-        self.mm_trust_count = 4
-        self.mm_fully_decided_trust_count = 6
-        self.mm_proved_weight = 1e-3
-        self.mm_undecided_weight = 0.1
-        self.mm_simulation_failure_window = 4
-        self.mm_simulation_failure_multiplier = 1.5
-        self.mm_max_num_simulations = 1_024
+def sft_config_from_dict(values: dict[str, Any]) -> SFTConfig:
+    """Build a strict SFT configuration from serialized values."""
+    data = dict(values)
+    for name in ('train_input', 'validation_input', 'model'):
+        data[name] = _resolve_path(data[name])
+    return SFTConfig(**data)
 
-        self.run_id = run_id
+
+def rl_config_from_dict(
+    values: dict[str, Any],
+    run_id: int | str = 0,
+) -> Config:
+    """Build a strict RL configuration from serialized values."""
+    data = dict(values)
+    data['dataset_dir'] = _resolve_path(data['dataset_dir'])
+    data['sft_dataset_path'] = _resolve_path(data['sft_dataset_path'])
+    data['tokenizer_model'] = str(_resolve_path(data['tokenizer_model']))
+    if data['sft_run_dir'] is not None:
+        data['sft_run_dir'] = _resolve_path(data['sft_run_dir'])
+    data['wandb_tags'] = tuple(data['wandb_tags'])
+    if data['seed'] is None:
+        data['seed'] = secrets.randbits(63)
+    config = Config(**data)
+    config.run_id = run_id
+    return config
+
+
+def load_experiment_config(
+    path: Path,
+    run_id: int | str = 0,
+) -> ExperimentConfig:
+    """Load both required sections of an experiment YAML file."""
+    with path.open(encoding='utf-8') as config_file:
+        values = yaml.safe_load(config_file)
+    if not isinstance(values, dict):
+        raise TypeError('Experiment YAML must contain a mapping.')
+    sections = cast(dict[str, Any], values)
+    if set(sections) != {'sft', 'rl'}:
+        raise ValueError('Experiment YAML must contain exactly sft and rl sections.')
+    if not isinstance(sections['sft'], dict) or not isinstance(
+        sections['rl'], dict
+    ):
+        raise TypeError('The sft and rl sections must be mappings.')
+    return ExperimentConfig(
+        sft=sft_config_from_dict(cast(dict[str, Any], sections['sft'])),
+        rl=rl_config_from_dict(
+            cast(dict[str, Any], sections['rl']),
+            run_id,
+        ),
+    )
+
+
+def serializable_config(config: Config | SFTConfig) -> dict[str, Any]:
+    """Convert source configuration fields to JSON-compatible values."""
+    excluded = {
+        'run_id',
+        'environment_ctor',
+        'train_dataset_path',
+        'validation_dataset_path',
+        'test_dataset_path',
+        'initial_params_path',
+        'num_games',
+        'mm_disprove_rate',
+    }
+    return {
+        name: str(value) if isinstance(value, Path) else value
+        for name, value in asdict(config).items()
+        if name not in excluded
+    }

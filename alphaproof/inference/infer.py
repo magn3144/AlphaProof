@@ -5,7 +5,14 @@ from typing import Any, cast
 
 import torch
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import (
+    DEFAULT_EXPERIMENT_PATH,
+    Config,
+    load_experiment_config,
+    rl_config_from_dict,
+    serializable_config,
+    sft_config_from_dict,
+)
 from alphaproof.core.environment import Environment
 from alphaproof.core.game import extract_proof_script
 from alphaproof.core.network import Network, Params
@@ -17,69 +24,46 @@ from leantree import LeanProject
 
 
 def load_run_config(run_dir: Path) -> dict[str, Any]:
-    """Load optional settings saved alongside a network checkpoint."""
+    """Load settings saved alongside a network checkpoint."""
     config_path = run_dir / 'config.json'
-    if not config_path.exists():
-        return {}
     with config_path.open(encoding='utf-8') as file:
         return json.load(file)
 
 
 def make_config(args: argparse.Namespace) -> Config:
     """Build search configuration for an SFT or RL run."""
-    defaults = Config()
     run_data = load_run_config(args.run_dir)
-    saved_config = run_data.get('config', {})
-    if saved_config:
-        model_run_dir = Path(saved_config['sft_run_dir'])
-        learning_rate = float(saved_config['lr'])
+    saved_config = run_data['config']
+    if 'num_simulations' in saved_config:
+        config = rl_config_from_dict(saved_config, args.run_dir.name)
     else:
-        model_run_dir = args.run_dir
-        learning_rate = float(run_data.get('learning_rate', 5e-5))
-
-    config = Config(
-        num_simulations=args.num_simulations,
-        batch_size=1,
-        num_actors=args.parallel_searches,
-        num_games_per_actor=1,
-        inference_batch_size=args.inference_batch_size,
-        inference_batch_timeout=args.inference_batch_timeout,
-        num_sampled_actions=args.num_sampled_actions,
-        tactic_timeout=args.tactic_timeout,
-        seed=args.seed,
-        lr=learning_rate,
-        sft_run_dir=model_run_dir,
-        max_state_length=int(
-            saved_config.get(
-                'max_state_length',
-                run_data.get('max_state_length', defaults.max_state_length),
-            )
-        ),
-        max_action_length=int(
-            saved_config.get(
-                'max_action_length',
-                run_data.get('max_action_length', defaults.max_action_length),
-            )
-        ),
-        rollout_max_action_length=int(
-            saved_config.get(
-                'rollout_max_action_length',
-                defaults.rollout_max_action_length,
-            )
-        ),
-    )
-    for name in (
-        'pb_c_base',
-        'pb_c_init',
-        'value_discount',
-        'prior_temperature',
-        'no_legal_actions_value',
-        'ps_c',
-        'ps_alpha',
-        'num_value_bins',
-    ):
-        if name in saved_config:
-            setattr(config, name, saved_config[name])
+        sft_config = sft_config_from_dict(saved_config)
+        values = serializable_config(
+            load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
+        )
+        values.update(
+            {
+                'lr': sft_config.learning_rate,
+                'sft_run_dir': str(args.run_dir),
+                'max_state_length': sft_config.max_state_length,
+                'max_action_length': sft_config.max_action_length,
+                'rollout_max_action_length': (
+                    sft_config.rollout_max_action_length
+                ),
+                'num_value_bins': sft_config.num_value_bins,
+            }
+        )
+        config = rl_config_from_dict(values, args.run_dir.name)
+    config.num_simulations = args.num_simulations
+    config.batch_size = 1
+    config.num_actors = args.parallel_searches
+    config.num_games = 1
+    config.num_games_per_actor = 1
+    config.inference_batch_size = args.inference_batch_size
+    config.inference_batch_timeout = args.inference_batch_timeout
+    config.num_sampled_actions = args.num_sampled_actions
+    config.tactic_timeout = args.tactic_timeout
+    config.seed = args.seed
     return config
 
 
@@ -110,7 +94,7 @@ def theorem_text(record: dict[str, Any]) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse paths and shared settings for JSONL inference."""
-    defaults = Config()
+    defaults = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
     default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description='Search for verified Lean proofs from a JSONL batch.'

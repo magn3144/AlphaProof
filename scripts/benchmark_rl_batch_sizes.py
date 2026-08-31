@@ -2,11 +2,15 @@ import argparse
 import json
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import torch
 
-from alphaproof.core.config import Config, RL_PRECISIONS
+from alphaproof.core.config import (
+    DEFAULT_EXPERIMENT_PATH,
+    RL_PRECISIONS,
+    load_experiment_config,
+)
 from alphaproof.core.network import Network
 
 
@@ -106,7 +110,7 @@ def training_batch(
     batch_size: int,
 ) -> list[tuple[torch.Tensor, torch.Tensor, float]]:
     """Create a full-length synthetic learner batch."""
-    token_id = int(network.model.config.eos_token_id)
+    token_id = cast(int, network.model.config.eos_token_id)
     observation = torch.full(
         (network.max_state_length,), token_id, dtype=torch.long
     )
@@ -134,7 +138,9 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError('This benchmark requires CUDA.')
 
-    config = Config(batch_size=1, dtype=args.dtype)
+    config = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
+    config.batch_size = 1
+    config.dtype = args.dtype
     network = Network(config)
     parameter_dtype = (
         torch.bfloat16 if args.dtype == 'bfloat16' else torch.float32

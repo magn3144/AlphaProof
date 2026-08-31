@@ -1,4 +1,3 @@
-import argparse
 import json
 from collections import deque
 from collections.abc import Sequence
@@ -7,10 +6,9 @@ from typing import Any
 
 import wandb
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import Config, serializable_config
 from alphaproof.core.game import Game
 from alphaproof.inference.parallel import InferenceBatchStats
-from alphaproof.training.run_config import serializable_config
 from alphaproof.training.run_diagnostics import RunDiagnostics
 
 
@@ -20,18 +18,20 @@ VALIDATION_RESULTS_FILE = 'validation_results.jsonl'
 
 
 def initialize_wandb(
-    args: argparse.Namespace,
+    run_name: str,
+    resume: bool,
+    wandb_run_id: str,
     config: Config,
 ) -> Any:
     """Initialize W&B with the run's saved settings."""
     wandb_run: Any = wandb.init(
         project=config.wandb_project,
         entity=config.wandb_entity,
-        name=args.wandb_name or args.run_name,
-        id=args.wandb_run_id,
+        name=config.wandb_name or run_name,
+        id=wandb_run_id,
         tags=config.wandb_tags,
-        mode=args.wandb_mode,
-        resume='allow' if args.resume else 'never',
+        mode=config.wandb_mode,
+        resume='allow' if resume else 'never',
         config=serializable_config(config),
         settings=wandb.Settings(
             finish_timeout=60.0,

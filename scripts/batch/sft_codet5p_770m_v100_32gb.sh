@@ -25,38 +25,19 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 
 RUN_NAME="${RUN_NAME:-sft_codet5p_770m_v100_32gb}"
-EPOCHS="${EPOCHS:-1}"
-CHECKPOINTS_PER_EPOCH="${CHECKPOINTS_PER_EPOCH:-4}"
-BATCH_SIZE="${BATCH_SIZE:-10}"
-LEARNING_RATE="${LEARNING_RATE:-5e-5}"
-VALUE_WEIGHT="${VALUE_WEIGHT:-0.001}"
-MAX_STATE_LENGTH="${MAX_STATE_LENGTH:-640}"
-MAX_ACTION_LENGTH="${MAX_ACTION_LENGTH:-128}"
-DTYPE="${DTYPE:-float32}"
-WANDB_MODE="${WANDB_MODE:-online}"
 
 nvidia-smi
 
 uv sync --frozen
 
-set -- -m alphaproof.training.sft \
-    "${RUN_NAME}" \
-    --epochs "${EPOCHS}" \
-    --batch-size "${BATCH_SIZE}" \
-    --checkpoints-per-epoch "${CHECKPOINTS_PER_EPOCH}" \
-    --learning-rate "${LEARNING_RATE}" \
-    --value-weight "${VALUE_WEIGHT}" \
-    --max-state-length "${MAX_STATE_LENGTH}" \
-    --max-action-length "${MAX_ACTION_LENGTH}" \
-    --dtype "${DTYPE}" \
-    --wandb-mode "${WANDB_MODE}" \
-    --device cuda
-
 if [ -d "data/runs/${RUN_NAME}" ]; then
     echo "Resuming existing SFT run ${RUN_NAME}."
-    set -- "$@" --resume
+    set -- -m alphaproof.training.sft "${RUN_NAME}" --resume
 else
     echo "Starting new SFT run ${RUN_NAME}."
+    set -- -m alphaproof.training.sft \
+        "${RUN_NAME}" \
+        alphaproof/yaml/codet5p_770m_l40s.yaml
 fi
 
 uv run --no-sync python "$@"

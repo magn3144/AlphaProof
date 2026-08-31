@@ -4,7 +4,7 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from alphaproof.core.config import MODELS_DIR
+from alphaproof.core.paths import MODELS_DIR
 
 
 GOEDEL_PROVER_MODEL_NAME = 'Goedel-LM/Goedel-Prover-V2-32B'

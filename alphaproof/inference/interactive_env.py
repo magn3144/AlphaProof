@@ -18,7 +18,7 @@ if __package__ in (None, ''):
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from alphaproof.core.actors import run_mcts
-from alphaproof.core.config import Config
+from alphaproof.core.config import DEFAULT_EXPERIMENT_PATH, Config, load_experiment_config
 from alphaproof.core.environment import Action, Environment, NodeType, State
 from alphaproof.core.game import (
     Game,
@@ -733,7 +733,7 @@ def validate_run_dir(parser: argparse.ArgumentParser, run_dir: Path) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    defaults = Config()
+    defaults = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
     default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description='Run the interactive AlphaProof backend.'

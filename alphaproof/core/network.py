@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 from transformers import AutoTokenizer, T5ForConditionalGeneration
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import Config, SFTConfig
 from alphaproof.core.environment import Action
 
 
@@ -35,7 +35,7 @@ class NetworkSamplingOutput(typing.NamedTuple):
 class Network(nn.Module):
     """CodeT5+ policy and value network used by the training loop."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config | SFTConfig):
         """Initialize the model, value head, and optimizer."""
         super().__init__()
 

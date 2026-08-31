@@ -24,20 +24,19 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="${RUN_NAME:-rl_codet5p_770m_l40s_48gb_mixed_96actors_01}"
+RUN_NAME="${RUN_NAME:-rl_codet5p_770m_l40s_48gb_01}"
 
 nvidia-smi
 uv sync --frozen
 
-set -- -m alphaproof.training.train "${RUN_NAME}" \
-    --dtype mixed \
-    --wandb-mode online
-
 if [ -d "data/runs/${RUN_NAME}" ]; then
     echo "Resuming existing RL run ${RUN_NAME}."
-    set -- "$@" --resume
+    set -- -m alphaproof.training.train "${RUN_NAME}" --resume
 else
     echo "Starting new RL run ${RUN_NAME}."
+    set -- -m alphaproof.training.train \
+        "${RUN_NAME}" \
+        alphaproof/yaml/codet5p_770m_l40s.yaml
 fi
 
 set +e

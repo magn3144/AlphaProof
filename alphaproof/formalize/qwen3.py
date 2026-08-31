@@ -16,7 +16,7 @@ from lmformatenforcer.integrations.transformers import (
     build_transformers_prefix_allowed_tokens_fn,
 )
 
-from alphaproof.core.config import MODELS_DIR
+from alphaproof.core.paths import MODELS_DIR
 
 
 QWEN3_MODEL_NAME = 'Qwen/Qwen3.6-27B'

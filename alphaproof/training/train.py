@@ -1,14 +1,17 @@
 import argparse
 import gc
-import json
 import math
 import uuid
 from pathlib import Path
-from typing import Any
 
 import torch
 
-from alphaproof.core.config import Config, RL_PRECISIONS
+from alphaproof.core.config import (
+    Config,
+    RL_PRECISIONS,
+    load_experiment_config,
+    rl_config_from_dict,
+)
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
 from alphaproof.inference.parallel import ParallelSearchEngine
@@ -16,7 +19,7 @@ from alphaproof.training.actor_phase import run_actor_phase
 from alphaproof.training.matchmaker import Matchmaker
 from alphaproof.training.randomness import seed_everything
 from alphaproof.training.replay_buffer import ReplayBuffer
-from alphaproof.training.run_config import CONFIG_FILE, save_run_config
+from alphaproof.training.run_config import load_run_config, save_run_config
 from alphaproof.training.run_logger import RunLogger, initialize_wandb
 from alphaproof.training.shared_storage import SharedStorage
 
@@ -150,157 +153,80 @@ def alphaproof_train(
     return network
 
 
-def make_config(
-    args: argparse.Namespace,
-    saved_config: dict[str, Any] | None = None,
-) -> Config:
-    """Build the AlphaProof configuration from CLI arguments."""
-    config = Config(
-        num_simulations=args.num_simulations,
-        batch_size=args.batch_size,
-        dataset_dir=args.dataset_dir,
-        sft_dataset_path=args.sft_dataset_path,
-        sft_fraction=args.sft_fraction,
-        disprove_rate=args.disprove_rate,
-        num_actors=args.num_actors,
-        num_games_per_actor=args.num_games,
-        inference_batch_size=args.inference_batch_size,
-        inference_batch_timeout=args.inference_batch_timeout,
-        rollout_max_action_length=args.rollout_max_action_length,
-        seed=args.seed,
-        debug=args.debug,
-        lr=args.learning_rate,
-        dtype=args.dtype,
-        run_id=args.run_name,
-        training_steps=args.training_steps,
-        training_iterations=args.training_iterations,
-        checkpoint_interval=args.checkpoint_interval,
-        value_weight=args.value_weight,
-    )
-    if saved_config is not None:
-        for name, value in saved_config.items():
-            if name in (
-                'dataset_dir',
-                'train_dataset_path',
-                'validation_dataset_path',
-                'test_dataset_path',
-                'sft_dataset_path',
-                'sft_run_dir',
-                'initial_params_path',
-            ):
-                value = Path(value) if value is not None else None
-            setattr(config, name, value)
-    return config
-
-
-def positive_int(value: str) -> int:
-    """Parse a positive integer."""
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError('value must be positive')
-    return parsed
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse RL training arguments."""
-    defaults = Config()
     parser = argparse.ArgumentParser(description='Train AlphaProof with RL.')
     parser.add_argument('run_name', help='Directory name under data/runs.')
+    parser.add_argument('config_path', type=Path, nargs='?')
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--seed', type=int, default=defaults.seed)
-    parser.add_argument('--debug', action='store_true', default=defaults.debug)
-    parser.add_argument(
-        '--dataset-dir', type=Path, default=defaults.dataset_dir
+    args = parser.parse_args(argv)
+    if Path(args.run_name).name != args.run_name:
+        parser.error('run_name must be a single directory name')
+    if args.resume and args.config_path is not None:
+        parser.error('CONFIG.yaml must be omitted when resuming')
+    if not args.resume and args.config_path is None:
+        parser.error('CONFIG.yaml is required for a new run')
+    if args.config_path is not None and not args.config_path.is_file():
+        parser.error(f'experiment YAML does not exist: {args.config_path}')
+    return args
+
+
+def validate_config(config: Config) -> None:
+    """Validate relationships in a resolved RL configuration."""
+    positive = (
+        'num_simulations',
+        'batch_size',
+        'num_actors',
+        'num_games_per_actor',
+        'inference_batch_size',
+        'num_sampled_actions',
+        'rollout_max_action_length',
+        'training_steps',
+        'training_iterations',
+        'checkpoint_interval',
     )
-    parser.add_argument(
-        '--sft-dataset-path', type=Path, default=defaults.sft_dataset_path
-    )
-    parser.add_argument(
-        '--sft-fraction', type=float, default=defaults.sft_fraction
-    )
-    parser.add_argument(
-        '--disprove-rate', type=float, default=defaults.mm_disprove_rate
-    )
-    parser.add_argument(
-        '--num-simulations', type=positive_int, default=defaults.num_simulations
-    )
-    parser.add_argument(
-        '--num-actors', type=positive_int, default=defaults.num_actors
-    )
-    parser.add_argument(
-        '--num-games', type=positive_int, default=defaults.num_games
-    )
-    parser.add_argument(
-        '--inference-batch-size',
-        type=positive_int,
-        default=defaults.inference_batch_size,
-    )
-    parser.add_argument(
-        '--inference-batch-timeout',
-        type=float,
-        default=defaults.inference_batch_timeout,
-    )
-    parser.add_argument(
-        '--rollout-max-action-length',
-        type=positive_int,
-        default=defaults.rollout_max_action_length,
-    )
-    parser.add_argument(
-        '--batch-size', type=positive_int, default=defaults.batch_size
-    )
-    parser.add_argument('--learning-rate', type=float, default=defaults.lr)
-    parser.add_argument(
-        '--dtype',
-        choices=RL_PRECISIONS,
-        default=defaults.dtype,
-    )
-    parser.add_argument(
-        '--training-steps', type=positive_int, default=defaults.training_steps
-    )
-    parser.add_argument(
-        '--training-iterations',
-        type=positive_int,
-        default=defaults.training_iterations,
-    )
-    parser.add_argument(
-        '--checkpoint-interval',
-        type=positive_int,
-        default=defaults.checkpoint_interval,
-    )
-    parser.add_argument('--value-weight', type=float, default=defaults.value_weight)
-    parser.add_argument('--wandb-name')
-    parser.add_argument(
-        '--wandb-mode',
-        choices=('online', 'offline', 'disabled'),
-        default='disabled',
-    )
-    return parser.parse_args()
+    for name in positive:
+        if getattr(config, name) < 1:
+            raise ValueError(f'{name} must be positive.')
+    if config.lr <= 0:
+        raise ValueError('lr must be positive.')
+    if config.value_weight < 0:
+        raise ValueError('value_weight cannot be negative.')
+    if config.inference_batch_timeout < 0:
+        raise ValueError('inference_batch_timeout cannot be negative.')
+    if not 0 <= config.disprove_rate <= 1:
+        raise ValueError('disprove_rate must be between zero and one.')
+    if not 0 < config.sft_fraction < 1:
+        raise ValueError('sft_fraction must be between zero and one.')
+    if config.dtype not in RL_PRECISIONS:
+        raise ValueError(f'dtype must be one of {RL_PRECISIONS}.')
+    if config.wandb_mode not in ('online', 'offline', 'disabled'):
+        raise ValueError('wandb_mode must be online, offline, or disabled.')
+    if not math.isclose(
+        config.batch_size * config.sft_fraction,
+        round(config.batch_size * config.sft_fraction),
+    ):
+        raise ValueError('batch_size * sft_fraction must be a whole number.')
 
 
 def prepare_run(
     args: argparse.Namespace,
-) -> tuple[argparse.Namespace, Path, dict[str, Any] | None]:
-    """Create a new run or restore its saved CLI configuration."""
-    if Path(args.run_name).name != args.run_name:
-        raise ValueError('run_name must be a single directory name.')
+) -> tuple[Config, Path, str]:
+    """Create a new run or restore its saved configuration."""
     run_dir = RUNS_DIR / args.run_name
-    config_path = run_dir / CONFIG_FILE
 
     if args.resume:
-        if not config_path.is_file():
-            raise FileNotFoundError(f'Run configuration does not exist: {config_path}')
-        with config_path.open(encoding='utf-8') as config_file:
-            saved = json.load(config_file)
-        saved_args = saved['args']
-        saved_args['resume'] = True
-        return argparse.Namespace(**saved_args), run_dir, saved['config']
+        saved = load_run_config(run_dir)
+        config = rl_config_from_dict(saved['config'], args.run_name)
+        validate_config(config)
+        return config, run_dir, saved['wandb_run_id']
 
     if run_dir.exists():
         raise FileExistsError(f'Run already exists: {run_dir}')
-    args.wandb_run_id = uuid.uuid4().hex
-    config = make_config(args)
+    config = load_experiment_config(args.config_path, args.run_name).rl
+    validate_config(config)
     if config.sft_run_dir is None:
-        raise ValueError('Set sft_run_dir in Config before starting RL.')
+        raise ValueError('Set sft_run_dir in the RL configuration.')
     for dataset_path in (
         config.train_dataset_path,
         config.validation_dataset_path,
@@ -318,38 +244,25 @@ def prepare_run(
         raise FileNotFoundError('SFT model_source directory does not exist.')
     if not (config.sft_run_dir / 'network_params.pt').is_file():
         raise FileNotFoundError('SFT network_params.pt does not exist.')
-    if args.learning_rate <= 0:
-        raise ValueError('--learning-rate must be positive.')
-    if args.value_weight < 0:
-        raise ValueError('--value-weight cannot be negative.')
-    if args.inference_batch_timeout < 0:
-        raise ValueError('--inference-batch-timeout cannot be negative.')
-    if not 0 <= args.disprove_rate <= 1:
-        raise ValueError('--disprove-rate must be between zero and one.')
-    if not 0 < args.sft_fraction < 1:
-        raise ValueError('--sft-fraction must be between zero and one.')
-    if not math.isclose(
-        args.batch_size * args.sft_fraction,
-        round(args.batch_size * args.sft_fraction),
-    ):
-        raise ValueError(
-            '--batch-size * --sft-fraction must be a whole number.'
-        )
-
     run_dir.mkdir(parents=True)
-    return args, run_dir, None
+    wandb_run_id = uuid.uuid4().hex
+    save_run_config(run_dir, config, wandb_run_id)
+    return config, run_dir, wandb_run_id
 
 
 def main() -> None:
     """Run or resume AlphaProof reinforcement learning."""
-    args, run_dir, saved_config = prepare_run(parse_args())
-    config = make_config(args, saved_config)
-    if not args.resume:
-        save_run_config(run_dir, args, config)
+    args = parse_args()
+    config, run_dir, wandb_run_id = prepare_run(args)
     logger = RunLogger(
         run_dir,
         config.reward_window,
-        initialize_wandb(args, config),
+        initialize_wandb(
+            args.run_name,
+            args.resume,
+            wandb_run_id,
+            config,
+        ),
     )
     try:
         alphaproof_train(

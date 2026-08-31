@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import DEFAULT_EXPERIMENT_PATH, load_experiment_config
 from alphaproof.core.network import Network
 from alphaproof.inference.infer import load_network_checkpoint, make_config
 from alphaproof.training.sft import resolve_device
@@ -14,7 +14,7 @@ from alphaproof.training.sft import resolve_device
 
 def parse_args() -> argparse.Namespace:
     """Parse model interaction arguments."""
-    defaults = Config()
+    defaults = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
     default_run_dir = defaults.sft_run_dir
     parser = argparse.ArgumentParser(
         description=(
@@ -72,7 +72,7 @@ def main() -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    defaults = Config()
+    defaults = load_experiment_config(DEFAULT_EXPERIMENT_PATH).rl
     config_args = argparse.Namespace(
         run_dir=args.run_dir,
         num_simulations=defaults.num_simulations,

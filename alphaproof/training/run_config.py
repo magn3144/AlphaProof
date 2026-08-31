@@ -1,44 +1,35 @@
-import argparse
 import json
 from pathlib import Path
 from typing import Any
 
-from alphaproof.core.config import Config
+from alphaproof.core.config import Config, SFTConfig, serializable_config
 
 
 CONFIG_FILE = 'config.json'
 
 
-def serializable_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Convert CLI paths to JSON-compatible strings."""
-    return {
-        name: str(value) if isinstance(value, Path) else value
-        for name, value in vars(args).items()
-    }
-
-
-def serializable_config(config: Config) -> dict[str, Any]:
-    """Convert the full AlphaProof configuration to JSON values."""
-    return {
-        name: str(value) if isinstance(value, Path) else value
-        for name, value in vars(config).items()
-        if name != 'environment_ctor'
-    }
-
-
 def save_run_config(
     run_dir: Path,
-    args: argparse.Namespace,
-    config: Config,
+    config: Config | SFTConfig,
+    wandb_run_id: str,
 ) -> None:
-    """Save CLI and complete algorithm configuration for a new run."""
+    """Save the resolved experiment section and runtime metadata."""
     with (run_dir / CONFIG_FILE).open('w', encoding='utf-8') as config_file:
         json.dump(
             {
-                'args': serializable_args(args),
                 'config': serializable_config(config),
+                'wandb_run_id': wandb_run_id,
             },
             config_file,
             indent=2,
         )
         config_file.write('\n')
+
+
+def load_run_config(run_dir: Path) -> dict[str, Any]:
+    """Load a run's resolved configuration and runtime metadata."""
+    config_path = run_dir / CONFIG_FILE
+    if not config_path.is_file():
+        raise FileNotFoundError(f'Run configuration does not exist: {config_path}')
+    with config_path.open(encoding='utf-8') as config_file:
+        return json.load(config_file)

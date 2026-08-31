@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from alphaproof.core.config import Config
 
 
 _PROOF_SEPARATOR = ':= by sorry'
@@ -106,16 +102,3 @@ def _find_declaration(theorem: str) -> re.Match[str]:
     if not declarations:
         raise ValueError('Could not find theorem declaration.')
     return declarations[-1]
-
-
-def make_config() -> 'Config':
-    """Create the default pseudocode training configuration."""
-    from alphaproof.core.config import Config
-
-    return Config(
-            num_simulations=800,
-            batch_size=2048,
-            num_actors=3000,
-            num_games_per_actor=1,
-            lr=1.0,
-    )

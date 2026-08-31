@@ -1,24 +1,29 @@
 """Weights & Biases logging for supervised fine-tuning."""
 
-import argparse
 from typing import Any
 
 import wandb
 
-from alphaproof.training.run_config import serializable_args
+from alphaproof.core.config import SFTConfig, serializable_config
 
 
 class SFTLogger:
     """Log step-based SFT metrics and manage the W&B run lifecycle."""
 
-    def __init__(self, args: argparse.Namespace):
+    def __init__(
+        self,
+        run_name: str,
+        resume: bool,
+        wandb_run_id: str,
+        config: SFTConfig,
+    ):
         self.run: Any = wandb.init(
-            project='alphaproof',
-            name=args.wandb_name or args.run_name,
-            id=args.wandb_run_id,
-            mode=args.wandb_mode,
-            resume='allow' if args.resume else 'never',
-            config=serializable_args(args),
+            project=config.wandb_project,
+            name=config.wandb_name or run_name,
+            id=wandb_run_id,
+            mode=config.wandb_mode,
+            resume='allow' if resume else 'never',
+            config=serializable_config(config),
             settings=wandb.Settings(
                 finish_timeout=60.0,
                 finish_timeout_raises=True,

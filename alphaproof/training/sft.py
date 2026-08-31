@@ -14,10 +14,14 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerBase, RobertaTokenizer
 
-from alphaproof.core.config import Config, SFTConfig
+from alphaproof.core.config import (
+    SFTConfig,
+    load_experiment_config,
+    sft_config_from_dict,
+)
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
-from alphaproof.training.run_config import serializable_args
+from alphaproof.training.run_config import load_run_config, save_run_config
 from alphaproof.training.sft_logger import SFTLogger
 
 
@@ -184,29 +188,17 @@ def resolve_device(name: str) -> torch.device:
     return device
 
 
-def make_network(args: argparse.Namespace, device: torch.device) -> Network:
+def make_network(config: SFTConfig, device: torch.device) -> Network:
     """Construct the existing AlphaProof network with SFT hyperparameters."""
-    config = Config(
-        num_simulations=1,
-        batch_size=args.batch_size,
-        num_actors=1,
-        num_games_per_actor=1,
-        lr=args.learning_rate,
-        tokenizer_model=str(args.model),
-        sft_run_dir=None,
-        max_state_length=args.max_state_length,
-        max_action_length=args.max_action_length,
-    )
-    config.value_weight = args.value_weight
     tokenizer = RobertaTokenizer(
-        vocab=str(args.model / 'vocab.json'),
-        merges=str(args.model / 'merges.txt'),
-        model_max_length=args.max_state_length,
+        vocab=str(config.model / 'vocab.json'),
+        merges=str(config.model / 'merges.txt'),
+        model_max_length=config.max_state_length,
     )
     with patch.object(AutoTokenizer, 'from_pretrained', return_value=tokenizer):
         network = Network(config)
     network.device = device
-    network.to(device=device, dtype=TORCH_DTYPES[args.dtype])
+    network.to(device=device, dtype=TORCH_DTYPES[config.dtype])
     return network
 
 
@@ -355,7 +347,6 @@ def train_epoch(
                     run_dir,
                     network,
                     checkpoint_epoch,
-                    args,
                 )
                 print(f'Saved {checkpoint_path}', flush=True)
 
@@ -503,7 +494,6 @@ def save_checkpoint(
     run_dir: Path,
     network: Network,
     epoch: float,
-    args: argparse.Namespace,
 ) -> Path:
     """Save resumable training state and AlphaProof-compatible parameters."""
     checkpoints_dir = run_dir / 'checkpoints'
@@ -514,7 +504,6 @@ def save_checkpoint(
             'epoch': epoch,
             'network_params': network.params,
             'optimizer_state_dict': network.optimizer.state_dict(),
-            'args': serializable_args(args),
         },
         checkpoint_path,
     )
@@ -582,32 +571,16 @@ def print_dataset_stats(name: str, stats: DatasetStats) -> None:
     )
 
 
-def train(args: argparse.Namespace) -> Path:
+def train(args: argparse.Namespace, config: SFTConfig) -> Path:
     """Run joint supervised policy and value training."""
     run_dir = RUNS_DIR / args.run_name
-    if args.resume:
-        if not run_dir.is_dir():
-            raise FileNotFoundError(f'SFT run does not exist: {run_dir}')
-        saved_args = json.loads(
-            (run_dir / 'config.json').read_text(encoding='utf-8')
-        )
-        args.wandb_run_id = saved_args['wandb_run_id']
-    elif run_dir.exists():
-        raise FileExistsError(f'SFT run already exists: {run_dir}')
-    else:
-        run_dir.mkdir(parents=True)
-        (run_dir / 'config.json').write_text(
-            json.dumps(serializable_args(args), indent=2) + '\n',
-            encoding='utf-8',
-        )
-
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
     device = resolve_device(args.device)
-    network = make_network(args, device)
+    network = make_network(config, device)
     train_examples, train_stats = load_examples(
         args.train_input,
         network.tokenizer,
@@ -672,7 +645,12 @@ def train(args: argparse.Namespace) -> Path:
 
     metrics_path = run_dir / 'metrics.jsonl'
     print(f'Training on {device}', flush=True)
-    logger = SFTLogger(args)
+    logger = SFTLogger(
+        args.run_name,
+        args.resume,
+        args.wandb_run_id,
+        config,
+    )
     try:
         for epoch in range(first_epoch, args.epochs + 1):
             training_metrics = train_epoch(
@@ -703,7 +681,7 @@ def train(args: argparse.Namespace) -> Path:
                 validation_metrics,
                 len(validation_examples),
             )
-            checkpoint_path = save_checkpoint(run_dir, network, epoch, args)
+            checkpoint_path = save_checkpoint(run_dir, network, epoch)
             print(
                 f"Finished epoch {epoch}/{args.epochs}: train loss "
                 f"{training_metrics['loss']:.4f}, validation loss "
@@ -723,105 +701,103 @@ def train(args: argparse.Namespace) -> Path:
     return run_dir
 
 
-def positive_int(value: str) -> int:
-    """Parse a positive integer for argparse."""
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError('value must be positive')
-    return parsed
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse supervised fine-tuning command-line arguments."""
-    defaults = SFTConfig()
     parser = argparse.ArgumentParser(
         description='Fine-tune AlphaProof on LeanTree transitions.'
     )
     parser.add_argument('run_name', help='Directory name under data/runs.')
-    parser.add_argument('--train-input', type=Path, default=defaults.train_input)
-    parser.add_argument(
-        '--validation-input', type=Path, default=defaults.validation_input
-    )
-    parser.add_argument('--model', type=Path, default=defaults.model)
-    parser.add_argument('--epochs', type=positive_int, default=defaults.epochs)
-    parser.add_argument(
-        '--checkpoints-per-epoch',
-        type=positive_int,
-        default=defaults.checkpoints_per_epoch,
-    )
-    parser.add_argument('--num-pairs', type=positive_int, default=defaults.num_pairs)
-    parser.add_argument(
-        '--num-validation-pairs',
-        type=positive_int,
-        default=defaults.num_validation_pairs,
-    )
-    parser.add_argument('--batch-size', type=positive_int, default=defaults.batch_size)
-    parser.add_argument('--learning-rate', type=float, default=defaults.learning_rate)
-    parser.add_argument('--value-weight', type=float, default=defaults.value_weight)
-    parser.add_argument(
-        '--max-state-length', type=positive_int, default=defaults.max_state_length
-    )
-    parser.add_argument(
-        '--max-action-length', type=positive_int, default=defaults.max_action_length
-    )
-    parser.add_argument('--max-grad-norm', type=float, default=defaults.max_grad_norm)
-    parser.add_argument('--log-every', type=positive_int, default=defaults.log_every)
-    parser.add_argument(
-        '--validation-interval',
-        type=positive_int,
-        default=defaults.validation_interval,
-        help='Optimizer steps between validation checks.',
-    )
-    parser.add_argument(
-        '--validation-samples',
-        type=positive_int,
-        default=defaults.validation_samples,
-        help='Fixed validation subset used for frequent checks.',
-    )
-    parser.add_argument('--wandb-name', default=defaults.wandb_name)
-    parser.add_argument(
-        '--wandb-mode',
-        choices=('online', 'offline', 'disabled'),
-        default=defaults.wandb_mode,
-    )
-    parser.add_argument('--seed', type=int, default=defaults.seed)
-    parser.add_argument(
-        '--device',
-        choices=('auto', 'cpu', 'cuda', 'mps'),
-        default=defaults.device,
-    )
-    parser.add_argument(
-        '--dtype',
-        choices=tuple(TORCH_DTYPES),
-        default=defaults.dtype,
-        help='Floating-point precision used for model training.',
-    )
+    parser.add_argument('config_path', type=Path, nargs='?')
     parser.add_argument('--resume', action='store_true')
-    args = parser.parse_args()
-    args.wandb_run_id = uuid.uuid4().hex
-
+    args = parser.parse_args(argv)
     if Path(args.run_name).name != args.run_name:
         parser.error('run_name must be a single directory name')
-    if not args.train_input.is_file():
-        parser.error(f'training JSONL does not exist: {args.train_input}')
-    if not args.validation_input.is_file():
-        parser.error(
-            f'validation JSONL does not exist: {args.validation_input}'
-        )
-    if not args.model.is_dir():
-        parser.error(f'model directory does not exist: {args.model}')
-    if args.learning_rate <= 0:
-        parser.error('--learning-rate must be positive')
-    if args.value_weight < 0:
-        parser.error('--value-weight cannot be negative')
-    if args.max_grad_norm <= 0:
-        parser.error('--max-grad-norm must be positive')
+    if args.resume and args.config_path is not None:
+        parser.error('CONFIG.yaml must be omitted when resuming')
+    if not args.resume and args.config_path is None:
+        parser.error('CONFIG.yaml is required for a new run')
+    if args.config_path is not None and not args.config_path.is_file():
+        parser.error(f'experiment YAML does not exist: {args.config_path}')
     return args
+
+
+def validate_config(config: SFTConfig) -> None:
+    """Validate a resolved SFT configuration."""
+    positive = (
+        'epochs',
+        'checkpoints_per_epoch',
+        'batch_size',
+        'max_state_length',
+        'max_action_length',
+        'rollout_max_action_length',
+        'num_sampled_actions',
+        'num_value_bins',
+        'log_every',
+        'validation_interval',
+        'validation_samples',
+    )
+    for name in positive:
+        if getattr(config, name) < 1:
+            raise ValueError(f'{name} must be positive.')
+    if config.num_pairs is not None and config.num_pairs < 1:
+        raise ValueError('num_pairs must be positive when set.')
+    if config.num_validation_pairs is not None and config.num_validation_pairs < 1:
+        raise ValueError('num_validation_pairs must be positive when set.')
+    if config.learning_rate <= 0:
+        raise ValueError('learning_rate must be positive.')
+    if config.value_weight < 0:
+        raise ValueError('value_weight cannot be negative.')
+    if config.max_grad_norm <= 0:
+        raise ValueError('max_grad_norm must be positive.')
+    if config.device not in ('auto', 'cpu', 'cuda', 'mps'):
+        raise ValueError('device must be auto, cpu, cuda, or mps.')
+    if config.dtype not in TORCH_DTYPES:
+        raise ValueError(f'dtype must be one of {tuple(TORCH_DTYPES)}.')
+    if config.wandb_mode not in ('online', 'offline', 'disabled'):
+        raise ValueError('wandb_mode must be online, offline, or disabled.')
+    if not config.train_input.is_file():
+        raise FileNotFoundError(f'Training JSONL does not exist: {config.train_input}')
+    if not config.validation_input.is_file():
+        raise FileNotFoundError(
+            f'Validation JSONL does not exist: {config.validation_input}'
+        )
+    if not config.model.is_dir():
+        raise FileNotFoundError(f'Model directory does not exist: {config.model}')
+
+
+def prepare_run(
+    cli_args: argparse.Namespace,
+) -> tuple[argparse.Namespace, SFTConfig]:
+    """Create a new SFT run or restore its saved configuration."""
+    run_dir = RUNS_DIR / cli_args.run_name
+    if cli_args.resume:
+        if not run_dir.is_dir():
+            raise FileNotFoundError(f'SFT run does not exist: {run_dir}')
+        saved = load_run_config(run_dir)
+        config = sft_config_from_dict(saved['config'])
+        wandb_run_id = saved['wandb_run_id']
+        validate_config(config)
+    else:
+        if run_dir.exists():
+            raise FileExistsError(f'SFT run already exists: {run_dir}')
+        config = load_experiment_config(cli_args.config_path).sft
+        wandb_run_id = uuid.uuid4().hex
+        validate_config(config)
+        run_dir.mkdir(parents=True)
+        save_run_config(run_dir, config, wandb_run_id)
+    args = argparse.Namespace(
+        **vars(config),
+        run_name=cli_args.run_name,
+        resume=cli_args.resume,
+        wandb_run_id=wandb_run_id,
+    )
+    return args, config
 
 
 def main() -> None:
     """Run supervised fine-tuning."""
-    run_dir = train(parse_args())
+    args, config = prepare_run(parse_args())
+    run_dir = train(args, config)
     print(f'Training complete. Outputs saved under {run_dir}', flush=True)
 
 
