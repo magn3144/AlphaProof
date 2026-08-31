@@ -647,6 +647,7 @@ def train(args: argparse.Namespace, config: SFTConfig) -> Path:
     print(f'Training on {device}', flush=True)
     logger = SFTLogger(
         args.run_name,
+        run_dir,
         args.resume,
         args.wandb_run_id,
         config,

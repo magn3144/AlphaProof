@@ -1,13 +1,14 @@
 #!/bin/sh
-#BSUB -q gpul40s
-#BSUB -J rl_codet5p_770m_l40s
+#BSUB -q gpua100
+#BSUB -J rl_codet5p_770m_2x_A100_40gb
 #BSUB -n 32
 #BSUB -R "span[hosts=1]"
+#BSUB -R "select[gpu40gb]"
 #BSUB -R "rusage[mem=4GB]"
-#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -gpu "num=2:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o data/runs/rl_codet5p_770m_l40s_48gb_01/lsf_%J.out
-#BSUB -e data/runs/rl_codet5p_770m_l40s_48gb_01/lsf_%J.err
+#BSUB -o data/runs/rl_codet5p_770m_2x_A100_40gb_01/lsf_%J.out
+#BSUB -e data/runs/rl_codet5p_770m_2x_A100_40gb_01/lsf_%J.err
 
 set -eu
 
@@ -23,7 +24,7 @@ export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 export ALPHAPROOF_ALLOCATED_MEMORY_BYTES=137438953472
 
-RUN_NAME="rl_codet5p_770m_l40s_48gb_01"
+RUN_NAME="rl_codet5p_770m_2x_A100_40gb_01"
 mkdir -p "data/runs/${RUN_NAME}"
 
 nvidia-smi
@@ -36,7 +37,7 @@ else
     echo "Starting new RL run ${RUN_NAME}."
     set -- -m alphaproof.training.train \
         "${RUN_NAME}" \
-        alphaproof/yaml/codet5p_770m_l40s.yaml
+        alphaproof/yaml/codet5p_770m_2x_A100_40gb.yaml
 fi
 
 set +e

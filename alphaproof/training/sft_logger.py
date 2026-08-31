@@ -1,10 +1,15 @@
 """Weights & Biases logging for supervised fine-tuning."""
 
+from pathlib import Path
 from typing import Any
 
 import wandb
 
 from alphaproof.core.config import SFTConfig, serializable_config
+from alphaproof.training.resource_monitor import (
+    ResourceMonitor,
+    start_resource_monitor,
+)
 
 
 class SFTLogger:
@@ -13,12 +18,14 @@ class SFTLogger:
     def __init__(
         self,
         run_name: str,
+        run_dir: Path,
         resume: bool,
         wandb_run_id: str,
         config: SFTConfig,
     ):
         self.run: Any = wandb.init(
             project=config.wandb_project,
+            dir=run_dir,
             name=config.wandb_name or run_name,
             id=wandb_run_id,
             mode=config.wandb_mode,
@@ -32,6 +39,10 @@ class SFTLogger:
         self.run.define_metric('sft/step')
         self.run.define_metric('train/*', step_metric='sft/step')
         self.run.define_metric('validation/*', step_metric='sft/step')
+        self.run.define_metric('resources/*')
+        self.resource_monitor: ResourceMonitor | None = start_resource_monitor(
+            self.run
+        )
 
     def log_training(
         self,
@@ -99,4 +110,6 @@ class SFTLogger:
 
     def finish(self, exit_code: int) -> None:
         """Close the W&B run."""
+        if self.resource_monitor is not None:
+            self.resource_monitor.stop()
         self.run.finish(exit_code=exit_code)

@@ -19,7 +19,11 @@ from alphaproof.training.actor_phase import run_actor_phase
 from alphaproof.training.matchmaker import Matchmaker
 from alphaproof.training.randomness import seed_everything
 from alphaproof.training.replay_buffer import ReplayBuffer
-from alphaproof.training.run_config import load_run_config, save_run_config
+from alphaproof.training.run_config import (
+    CONFIG_FILE,
+    load_run_config,
+    save_run_config,
+)
 from alphaproof.training.run_logger import RunLogger, initialize_wandb
 from alphaproof.training.shared_storage import SharedStorage
 
@@ -221,7 +225,7 @@ def prepare_run(
         validate_config(config)
         return config, run_dir, saved['wandb_run_id']
 
-    if run_dir.exists():
+    if (run_dir / CONFIG_FILE).exists():
         raise FileExistsError(f'Run already exists: {run_dir}')
     config = load_experiment_config(args.config_path, args.run_name).rl
     validate_config(config)
@@ -244,7 +248,7 @@ def prepare_run(
         raise FileNotFoundError('SFT model_source directory does not exist.')
     if not (config.sft_run_dir / 'network_params.pt').is_file():
         raise FileNotFoundError('SFT network_params.pt does not exist.')
-    run_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     wandb_run_id = uuid.uuid4().hex
     save_run_config(run_dir, config, wandb_run_id)
     return config, run_dir, wandb_run_id
@@ -259,6 +263,7 @@ def main() -> None:
         config.reward_window,
         initialize_wandb(
             args.run_name,
+            run_dir,
             args.resume,
             wandb_run_id,
             config,

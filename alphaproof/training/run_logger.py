@@ -9,6 +9,10 @@ import wandb
 from alphaproof.core.config import Config, serializable_config
 from alphaproof.core.game import Game
 from alphaproof.inference.parallel import InferenceBatchStats
+from alphaproof.training.resource_monitor import (
+    ResourceMonitor,
+    start_resource_monitor,
+)
 from alphaproof.training.run_diagnostics import RunDiagnostics
 
 
@@ -19,6 +23,7 @@ VALIDATION_RESULTS_FILE = 'validation_results.jsonl'
 
 def initialize_wandb(
     run_name: str,
+    run_dir: Path,
     resume: bool,
     wandb_run_id: str,
     config: Config,
@@ -31,6 +36,7 @@ def initialize_wandb(
         id=wandb_run_id,
         tags=config.wandb_tags,
         mode=config.wandb_mode,
+        dir=run_dir,
         resume='allow' if resume else 'never',
         config=serializable_config(config),
         settings=wandb.Settings(
@@ -45,6 +51,7 @@ def initialize_wandb(
     wandb_run.define_metric('replay_validation/*', step_metric='learner/step')
     wandb_run.define_metric('validation/game')
     wandb_run.define_metric('validation/*', step_metric='validation/game')
+    wandb_run.define_metric('resources/*')
     return wandb_run
 
 
@@ -65,6 +72,9 @@ class RunLogger:
         self.validation_results_path.touch(exist_ok=True)
         self.reward_window = reward_window
         self.wandb_run = wandb_run
+        self.resource_monitor: ResourceMonitor | None = start_resource_monitor(
+            wandb_run
+        )
         self.diagnostics = RunDiagnostics(run_dir)
         successes, rewards, proved_theorems = self._load_results()
         self.games_completed = len(successes)
@@ -267,6 +277,8 @@ class RunLogger:
 
     def finish(self, exit_code: int) -> None:
         """Finish W&B without hiding an existing training failure."""
+        if self.resource_monitor is not None:
+            self.resource_monitor.stop()
         try:
             self.wandb_run.finish(exit_code=exit_code)
         except Exception as error:
