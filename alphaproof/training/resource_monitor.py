@@ -1,6 +1,7 @@
 """Periodic W&B logging for resources allocated to an LSF job."""
 
 import os
+import re
 import subprocess
 import threading
 import time
@@ -10,6 +11,28 @@ import psutil
 
 
 RESOURCE_LOG_INTERVAL_SECONDS = 15.0
+MEMORY_UNIT_BYTES = {
+    'KB': 1024,
+    'MB': 1024**2,
+    'GB': 1024**3,
+    'TB': 1024**4,
+}
+
+
+def allocated_memory_bytes(
+    resource_requirement: str,
+    allocated_cpus: int,
+) -> int:
+    """Return total memory reserved by an LSF resource requirement."""
+    match = re.search(
+        r'rusage\[[^]]*\bmem=([0-9]+(?:\.[0-9]+)?)([KMGT]B)?',
+        resource_requirement,
+    )
+    if match is None:
+        raise ValueError('LSF resource requirement does not specify memory')
+    memory_per_cpu = float(match.group(1))
+    unit = match.group(2) or 'MB'
+    return int(memory_per_cpu * MEMORY_UNIT_BYTES[unit] * allocated_cpus)
 
 
 class ResourceMonitor(threading.Thread):
@@ -20,8 +43,9 @@ class ResourceMonitor(threading.Thread):
         self.wandb_run = wandb_run
         self.process = psutil.Process()
         self.allocated_cpus = int(os.environ['LSB_DJOB_NUMPROC'])
-        self.allocated_memory_bytes = int(
-            os.environ['ALPHAPROOF_ALLOCATED_MEMORY_BYTES']
+        self.allocated_memory_bytes = allocated_memory_bytes(
+            os.environ['LSB_EFFECTIVE_RSRCREQ'],
+            self.allocated_cpus,
         )
         self.gpu_ids = os.environ['CUDA_VISIBLE_DEVICES']
         self.stop_event = threading.Event()
@@ -91,7 +115,7 @@ def start_resource_monitor(wandb_run: Any) -> ResourceMonitor | None:
     """Start monitoring when training is running as an LSF job."""
     if (
         'LSB_JOBID' not in os.environ
-        or 'ALPHAPROOF_ALLOCATED_MEMORY_BYTES' not in os.environ
+        or 'LSB_EFFECTIVE_RSRCREQ' not in os.environ
     ):
         return None
     monitor = ResourceMonitor(wandb_run)
