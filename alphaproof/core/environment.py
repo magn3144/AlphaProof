@@ -145,7 +145,7 @@ class Environment:
         self._next_state_id += 1
         return self._next_state_id
 
-    def _send_imports(self) -> None:
+    def initialize(self) -> None:
         """Send configured imports once per Lean process."""
         if self._sent_imports:
             return
@@ -213,7 +213,7 @@ class Environment:
 
     def initial_state(self, theorem: Theorem) -> State:
         """Returns the initial tactic state."""
-        self._send_imports()
+        self.initialize()
         try:
             branch = self._env.proof_from_sorry(theorem)
         except LeanProcessException:

@@ -2,7 +2,7 @@ import asyncio
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from threading import Barrier, Condition, Lock, Thread, local
+from threading import Barrier, Condition, Lock, Semaphore, Thread, local
 from time import perf_counter
 
 from alphaproof.core.actors import ObjectiveRejection, play_game
@@ -245,8 +245,11 @@ class ParallelSearchEngine:
     ):
         if config.num_actors < 1:
             raise ValueError('Parallel search count must be positive.')
+        if config.max_concurrent_lean_imports < 1:
+            raise ValueError('Lean import concurrency must be positive.')
         self.config = config
         self.parallel_searches = config.num_actors
+        self._startup_semaphore = Semaphore(config.max_concurrent_lean_imports)
         self._worker_local = local()
         self._workers: list[_SearchWorker] = []
         self._workers_lock = Lock()
@@ -304,12 +307,15 @@ class ParallelSearchEngine:
         """Create one reusable Lean environment on an executor thread."""
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
+        environment: Environment | None = None
         try:
-            worker = _SearchWorker(
-                event_loop,
-                self.config.environment_ctor(),
-            )
+            with self._startup_semaphore:
+                environment = self.config.environment_ctor()
+                environment.initialize()
+            worker = _SearchWorker(event_loop, environment)
         except BaseException:
+            if environment is not None:
+                environment.close()
             asyncio.set_event_loop(None)
             event_loop.close()
             raise

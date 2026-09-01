@@ -64,6 +64,7 @@ class Config:
     batch_size: int
     num_actors: int
     num_games_per_actor: int
+    max_concurrent_lean_imports: int
     inference_batch_size: int
     inference_batch_timeout: float
     num_sampled_actions: int
