@@ -56,3 +56,4 @@ They might differ from the pseudocde, which is ok.
   - SFT: 1/4 random subset of NanoProof's SFT dataset
   - RL: 1/3 random subset of NanoProof's RL dataset
  - Only n (usually 32) lean processes are started concurrently to limit congestion
+ - yaml files with both SFT and RL hyperparameters are used for reproducibility
