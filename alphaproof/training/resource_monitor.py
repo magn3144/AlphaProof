@@ -35,6 +35,25 @@ def allocated_memory_bytes(
     return int(memory_per_cpu * MEMORY_UNIT_BYTES[unit] * allocated_cpus)
 
 
+def lsf_memory_bytes(job_id: str) -> int:
+    """Return the memory currently used by an LSF job."""
+    result = subprocess.run(
+        ['bjobs', '-noheader', '-o', 'mem', job_id],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    match = re.fullmatch(
+        r'\s*([0-9]+(?:\.[0-9]+)?)\s+([KMGT])bytes\s*',
+        result.stdout,
+    )
+    if match is None:
+        raise ValueError(f'Unexpected LSF memory output: {result.stdout!r}')
+    return int(
+        float(match.group(1)) * MEMORY_UNIT_BYTES[f'{match.group(2)}B']
+    )
+
+
 class ResourceMonitor(threading.Thread):
     """Log job-scoped CPU, RAM, and GPU utilization to W&B."""
 
@@ -42,6 +61,7 @@ class ResourceMonitor(threading.Thread):
         super().__init__(name='resource-monitor', daemon=True)
         self.wandb_run = wandb_run
         self.process = psutil.Process()
+        self.job_id = os.environ['LSB_JOBID']
         self.allocated_cpus = int(os.environ['LSB_DJOB_NUMPROC'])
         self.allocated_memory_bytes = allocated_memory_bytes(
             os.environ['LSB_EFFECTIVE_RSRCREQ'],
@@ -69,9 +89,7 @@ class ResourceMonitor(threading.Thread):
         self.previous_cpu_seconds = cpu_seconds
         self.previous_time = now
 
-        memory_bytes = sum(
-            process.memory_info().rss for process in self._processes()
-        )
+        memory_bytes = lsf_memory_bytes(self.job_id)
         gpu_utilization, gpu_memory_percent = self._gpu_metrics()
         self.wandb_run.log({
             'resources/cpu_utilization_percent': cpu_percent,
