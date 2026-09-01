@@ -28,11 +28,11 @@ sft:
 rl:
   num_simulations: 64
   batch_size: 10
-  num_actors: 192
+  num_actors: 96
   num_games_per_actor: 500
   max_concurrent_lean_imports: 32
-  inference_num_gpus: 2
-  inference_batch_size: 64
+  inference_num_gpus: 1
+  inference_batch_size: 32
   inference_batch_timeout: 0.05
   num_sampled_actions: 6
   tactic_timeout: 1.0

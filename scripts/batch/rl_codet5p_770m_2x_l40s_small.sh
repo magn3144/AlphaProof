@@ -1,13 +1,13 @@
 #!/bin/sh
 #BSUB -q gpul40s
-#BSUB -J rl_codet5p_770m_l40s
-#BSUB -n 48
+#BSUB -J rl_codet5p_770m_2x_l40s
+#BSUB -n 64
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=8GB]"
-#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -gpu "num=2:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o data/runs/rl_codet5p_770m_l40s_48gb_small_01/lsf_%J.out
-#BSUB -e data/runs/rl_codet5p_770m_l40s_48gb_small_01/lsf_%J.err
+#BSUB -o data/runs/rl_codet5p_770m_2x_l40s_small_01/lsf_%J.out
+#BSUB -e data/runs/rl_codet5p_770m_2x_l40s_small_01/lsf_%J.err
 
 set -eu
 
@@ -22,7 +22,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="rl_codet5p_770m_l40s_48gb_small_01"
+RUN_NAME="rl_codet5p_770m_2x_l40s_small_01"
 mkdir -p "data/runs/${RUN_NAME}"
 
 nvidia-smi
@@ -35,7 +35,7 @@ else
     echo "Starting new RL run ${RUN_NAME}."
     set -- -m alphaproof.training.rl_cli \
         "${RUN_NAME}" \
-        alphaproof/yaml/codet5p_770m_l40s_small.yaml
+        alphaproof/yaml/codet5p_770m_2x_l40s_small.yaml
 fi
 
 set +e
