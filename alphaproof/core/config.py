@@ -65,6 +65,7 @@ class Config:
     num_actors: int
     num_games_per_actor: int
     max_concurrent_lean_imports: int
+    inference_num_gpus: int
     inference_batch_size: int
     inference_batch_timeout: float
     num_sampled_actions: int

@@ -1,3 +1,4 @@
+import copy
 import typing
 from pathlib import Path
 from typing import Dict
@@ -5,6 +6,7 @@ from typing import Dict
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.nn.parallel import parallel_apply
 from transformers import AutoTokenizer, T5ForConditionalGeneration
 
 from alphaproof.core.config import Config, SFTConfig
@@ -32,12 +34,97 @@ class NetworkSamplingOutput(typing.NamedTuple):
     value: float
 
 
+class _InferenceModel(nn.Module):
+    """Model replica used for one inference batch shard."""
+
+    def __init__(
+        self,
+        model: T5ForConditionalGeneration,
+        value_head: nn.Linear,
+        rollout_max_action_length: int,
+        num_sampled_actions: int,
+        mixed_precision: bool,
+    ):
+        super().__init__()
+        self.model = model
+        self.value_head = value_head
+        self.rollout_max_action_length = rollout_max_action_length
+        self.num_sampled_actions = num_sampled_actions
+        self.mixed_precision = mixed_precision
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Generate tactics and value logits for one device-local shard."""
+        with torch.no_grad(), torch.autocast(
+            device_type=input_ids.device.type,
+            dtype=torch.bfloat16,
+            enabled=self.mixed_precision,
+        ):
+            encoder_outputs = self.model.get_encoder()(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_dict=True,
+            )
+            hidden_state = encoder_outputs.last_hidden_state
+            mask = attention_mask.to(dtype=hidden_state.dtype).unsqueeze(-1)
+            pooled_state = (
+                (hidden_state * mask).sum(dim=1)
+                / mask.sum(dim=1).clamp_min(1)
+            )
+            value_logits = self.value_head(pooled_state)
+
+            generation_model = typing.cast(typing.Any, self.model)
+            generated = generation_model.generate(
+                encoder_outputs=encoder_outputs,
+                attention_mask=attention_mask,
+                max_new_tokens=self.rollout_max_action_length,
+                num_return_sequences=self.num_sampled_actions,
+                do_sample=True,
+                output_scores=True,
+                return_dict_in_generate=True,
+            )
+            generated = typing.cast(typing.Any, generated)
+            if generated.scores is None:
+                raise ValueError('Expected generation output to include scores.')
+            transition_scores = generation_model.compute_transition_scores(
+                generated.sequences,
+                generated.scores,
+                normalize_logits=True,
+            )
+            generated_tokens = generated.sequences[
+                :, -transition_scores.shape[-1] :
+            ]
+            pad_token_id = typing.cast(int, self.model.config.pad_token_id)
+            score_mask = generated_tokens.ne(pad_token_id)
+            logprobs = transition_scores.masked_fill(
+                ~score_mask,
+                0.0,
+            ).sum(dim=-1)
+
+        return value_logits, generated.sequences, logprobs
+
+
 class Network(nn.Module):
     """CodeT5+ policy and value network used by the training loop."""
 
     def __init__(self, config: Config | SFTConfig):
         """Initialize the model, value head, and optimizer."""
         super().__init__()
+
+        inference_num_gpus = (
+            config.inference_num_gpus if isinstance(config, Config) else 1
+        )
+        if inference_num_gpus < 1:
+            raise ValueError('Inference GPU count must be positive.')
+        available_gpus = torch.cuda.device_count()
+        if isinstance(config, Config) and available_gpus < inference_num_gpus:
+            raise RuntimeError(
+                f'Requested {inference_num_gpus} inference GPUs, but only '
+                f'{available_gpus} are available.'
+            )
 
         self.num_value_bins = config.num_value_bins
         self.value_weight = config.value_weight
@@ -69,6 +156,20 @@ class Network(nn.Module):
         self.to(device=self.device, dtype=TORCH_DTYPES[config.dtype])
         self.optimizer = torch.optim.Adam(self.parameters(), lr=config.lr)
 
+        primary_inference_model = _InferenceModel(
+            self.model,
+            self.value_head,
+            self.rollout_max_action_length,
+            self.num_sampled_actions,
+            self.mixed_precision,
+        )
+        self._inference_models = [primary_inference_model]
+        for gpu_index in range(1, inference_num_gpus):
+            self._inference_models.append(
+                copy.deepcopy(primary_inference_model).to(f'cuda:{gpu_index}')
+            )
+        self._inference_replicas_stale = False
+
     @property
     def params(self) -> Params:
         """Return a PyTorch checkpoint compatible with shared storage."""
@@ -81,6 +182,7 @@ class Network(nn.Module):
     def params(self, params: Params):
         """Load a PyTorch checkpoint from shared storage."""
         self.load_state_dict(params)
+        self._inference_replicas_stale = True
 
     def load_params(self, path: Path) -> None:
         """Load network parameters saved by supervised fine-tuning."""
@@ -218,79 +320,65 @@ class Network(nn.Module):
             truncation=True,
             return_tensors='pt',
         )
-        input_ids = encoded.input_ids.to(self.device)
-        attention_mask = encoded.attention_mask.to(self.device)
-
-        with torch.no_grad(), torch.autocast(
-            device_type=self.device.type,
-            dtype=torch.bfloat16,
-            enabled=self.mixed_precision,
-        ):
-            encoder_outputs = self.model.get_encoder()(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                return_dict=True,
-            )
-            pooled_state = self._mean_pool_encoder_state(
-                encoder_outputs.last_hidden_state,
-                attention_mask,
-            )
-            value_logits = self.value_head(pooled_state)
-            value_probs = torch.softmax(value_logits, dim=-1)
-            values = (value_probs * self.value_bins).sum(dim=-1).tolist()
-
-            generation_model = typing.cast(typing.Any, self.model)
-            generated = generation_model.generate(
-                encoder_outputs=encoder_outputs,
-                attention_mask=attention_mask,
-                max_new_tokens=self.rollout_max_action_length,
-                num_return_sequences=self.num_sampled_actions,
-                do_sample=True,
-                output_scores=True,
-                return_dict_in_generate=True,
-            )
-            generated = typing.cast(typing.Any, generated)
-            if generated.scores is None:
-                raise ValueError('Expected generation output to include scores.')
-
-            # The summed logprobs are calcualted and later used in the PUCT formula
-            transition_scores = generation_model.compute_transition_scores(
-                generated.sequences,
-                generated.scores,
-                normalize_logits=True,
-            )
-            generated_tokens = generated.sequences[
-                :, -transition_scores.shape[-1] :
-            ]
-            pad_token_id = typing.cast(int, self.model.config.pad_token_id)
-            score_mask = generated_tokens.ne(pad_token_id)
-            logprobs = (
-                transition_scores.masked_fill(~score_mask, 0.0)
-                .sum(dim=-1)
-                .tolist()
-            )
-
-        generated_actions = self.tokenizer.batch_decode(
-            generated.sequences,
-            skip_special_tokens=True,
+        self._sync_inference_replicas()
+        input_id_shards = encoded.input_ids.chunk(len(self._inference_models))
+        attention_mask_shards = encoded.attention_mask.chunk(
+            len(self._inference_models)
         )
+        inference_models = self._inference_models[:len(input_id_shards)]
+        devices = [
+            next(inference_model.parameters()).device
+            for inference_model in inference_models
+        ]
+        inputs = [
+            (
+                input_ids.to(device),
+                attention_mask.to(device),
+            )
+            for input_ids, attention_mask, device in zip(
+                input_id_shards,
+                attention_mask_shards,
+                devices,
+            )
+        ]
+        for inference_model in inference_models:
+            inference_model.eval()
+        if len(inference_models) == 1:
+            shard_outputs = [inference_models[0](*inputs[0])]
+        else:
+            shard_outputs = parallel_apply(
+                inference_models,
+                inputs,
+                devices=devices,
+            )
+
         outputs = []
-        for observation_index, value in enumerate(values):
-            start = observation_index * self.num_sampled_actions
-            end = start + self.num_sampled_actions
-            action_logprobs: Dict[Action, float] = {}
-            for action, logprob in zip(
-                generated_actions[start:end],
-                logprobs[start:end],
-            ):
-                action_logprobs[action] = max(
-                    logprob,
-                    action_logprobs.get(action, float('-inf')),
-                )
-            outputs.append(NetworkSamplingOutput(
-                action_logprobs=action_logprobs,
-                value=value,
-            ))
+        for value_logits, generated_sequences, logprobs in shard_outputs:
+            value_probs = torch.softmax(value_logits, dim=-1)
+            values = (
+                value_probs * self.value_bins.to(value_logits.device)
+            ).sum(dim=-1).tolist()
+            generated_actions = self.tokenizer.batch_decode(
+                generated_sequences,
+                skip_special_tokens=True,
+            )
+            shard_logprobs = logprobs.tolist()
+            for observation_index, value in enumerate(values):
+                start = observation_index * self.num_sampled_actions
+                end = start + self.num_sampled_actions
+                action_logprobs: Dict[Action, float] = {}
+                for action, logprob in zip(
+                    generated_actions[start:end],
+                    shard_logprobs[start:end],
+                ):
+                    action_logprobs[action] = max(
+                        logprob,
+                        action_logprobs.get(action, float('-inf')),
+                    )
+                outputs.append(NetworkSamplingOutput(
+                    action_logprobs=action_logprobs,
+                    value=value,
+                ))
 
         return outputs
 
@@ -303,6 +391,7 @@ class Network(nn.Module):
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         self.optimizer.step()
+        self._inference_replicas_stale = True
         return loss.detach().item()
 
     def evaluate(
@@ -318,6 +407,15 @@ class Network(nn.Module):
         if tokens.dim() == 1:
             return tokens.unsqueeze(0)
         return tokens
+
+    def _sync_inference_replicas(self) -> None:
+        """Refresh inference replicas after the primary model changes."""
+        if not self._inference_replicas_stale:
+            return
+        primary_state = self._inference_models[0].state_dict()
+        for inference_model in self._inference_models[1:]:
+            inference_model.load_state_dict(primary_state)
+        self._inference_replicas_stale = False
 
     def _mean_pool_encoder_state(
         self,

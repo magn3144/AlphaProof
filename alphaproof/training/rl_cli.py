@@ -45,6 +45,7 @@ def validate_config(config: Config) -> None:
         'num_actors',
         'num_games_per_actor',
         'max_concurrent_lean_imports',
+        'inference_num_gpus',
         'inference_batch_size',
         'num_sampled_actions',
         'rollout_max_action_length',
