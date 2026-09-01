@@ -21,7 +21,11 @@ from alphaproof.core.config import (
 )
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
-from alphaproof.training.run_config import load_run_config, save_run_config
+from alphaproof.training.run_config import (
+    CONFIG_FILE,
+    load_run_config,
+    save_run_config,
+)
 from alphaproof.training.sft_logger import SFTLogger
 
 
@@ -779,12 +783,12 @@ def prepare_run(
         wandb_run_id = saved['wandb_run_id']
         validate_config(config)
     else:
-        if run_dir.exists():
+        if (run_dir / CONFIG_FILE).exists():
             raise FileExistsError(f'SFT run already exists: {run_dir}')
         config = load_experiment_config(cli_args.config_path).sft
         wandb_run_id = uuid.uuid4().hex
         validate_config(config)
-        run_dir.mkdir(parents=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
         save_run_config(run_dir, config, wandb_run_id)
     args = argparse.Namespace(
         **vars(config),
