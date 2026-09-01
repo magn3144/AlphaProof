@@ -6,8 +6,8 @@
 #BSUB -R "rusage[mem=8GB]"
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o scripts/batch/sft_codet5p_770m_l40s_small_%J.out
-#BSUB -e scripts/batch/sft_codet5p_770m_l40s_small_%J.err
+#BSUB -o data/runs/sft_codet5p_770m_l40s_small/lsf_%J.out
+#BSUB -e data/runs/sft_codet5p_770m_l40s_small/lsf_%J.err
 
 set -eu
 
@@ -27,14 +27,14 @@ RUN_NAME="sft_codet5p_770m_l40s_small"
 nvidia-smi
 uv sync --frozen
 
-if [ -d "data/runs/${RUN_NAME}" ]; then
+if [ -f "data/runs/${RUN_NAME}/config.json" ]; then
     echo "Resuming existing SFT run ${RUN_NAME}."
     set -- -m alphaproof.training.sft "${RUN_NAME}" --resume
 else
     echo "Starting new SFT run ${RUN_NAME}."
     set -- -m alphaproof.training.sft \
         "${RUN_NAME}" \
-        alphaproof/yaml/codet5p_770m_l40s_sft_small.yaml
+        alphaproof/yaml/codet5p_770m_l40s_small.yaml
 fi
 
 set +e
