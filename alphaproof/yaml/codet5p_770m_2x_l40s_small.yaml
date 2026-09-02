@@ -51,7 +51,7 @@ rl:
   max_action_length: 128
   rollout_max_action_length: 32
   training_steps: 5000
-  training_iterations: 500
+  training_iterations: 100
   checkpoint_interval: 250
   window_size: 250000
   value_weight: 0.01

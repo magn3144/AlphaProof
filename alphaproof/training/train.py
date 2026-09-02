@@ -66,6 +66,8 @@ def train_network(
         if step % config.checkpoint_interval == 0:
             storage.save_checkpoint(step, network)
 
+    if network.device.type == 'cuda':
+        torch.cuda.empty_cache()
     return step
 
 
