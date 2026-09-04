@@ -213,6 +213,7 @@ class RunLogger:
         self,
         step: int,
         train_loss: float,
+        learning_rate: float,
         validation_loss: float | None,
         replay_size: int,
     ) -> None:
@@ -220,6 +221,7 @@ class RunLogger:
         metrics = {
             'learner/step': step,
             'train/loss': train_loss,
+            'train/learning_rate': learning_rate,
             'replay/train_size': replay_size,
         }
         if validation_loss is not None:

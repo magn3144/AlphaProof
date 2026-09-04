@@ -61,6 +61,7 @@ def train_network(
             logger.log_training(
                 step,
                 train_loss,
+                network.optimizer.param_groups[0]['lr'],
                 validation_loss,
                 len(replay_buffer),
             )
