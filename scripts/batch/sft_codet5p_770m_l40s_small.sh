@@ -27,14 +27,15 @@ RUN_NAME="sft_codet5p_770m_l40s_small"
 nvidia-smi
 uv sync --frozen
 
-if [ -f "data/runs/${RUN_NAME}/config.json" ]; then
+CONFIG_PATH="alphaproof/yaml/codet5p_770m_l40s_small.yaml"
+
+if [ -f "data/runs/${RUN_NAME}/config_01.json" ]; then
     echo "Resuming existing SFT run ${RUN_NAME}."
-    set -- -m alphaproof.training.sft "${RUN_NAME}" --resume
+    set -- -m alphaproof.training.sft \
+        "${RUN_NAME}" "${CONFIG_PATH}" --resume --override
 else
     echo "Starting new SFT run ${RUN_NAME}."
-    set -- -m alphaproof.training.sft \
-        "${RUN_NAME}" \
-        alphaproof/yaml/codet5p_770m_l40s_small.yaml
+    set -- -m alphaproof.training.sft "${RUN_NAME}" "${CONFIG_PATH}"
 fi
 
 set +e

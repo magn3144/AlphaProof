@@ -11,7 +11,8 @@ from alphaproof.core.config import (
 )
 from alphaproof.core.paths import RUNS_DIR
 from alphaproof.training.run_config import (
-    CONFIG_FILE,
+    changed_config_fields,
+    has_run_config,
     load_run_config,
     save_run_config,
 )
@@ -23,16 +24,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse RL training arguments."""
     parser = argparse.ArgumentParser(description='Train AlphaProof with RL.')
     parser.add_argument('run_name', help='Directory name under data/runs.')
-    parser.add_argument('config_path', type=Path, nargs='?')
+    parser.add_argument('config_path', type=Path)
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--override', action='store_true')
     args = parser.parse_args(argv)
     if Path(args.run_name).name != args.run_name:
         parser.error('run_name must be a single directory name')
-    if args.resume and args.config_path is not None:
-        parser.error('CONFIG.yaml must be omitted when resuming')
-    if not args.resume and args.config_path is None:
-        parser.error('CONFIG.yaml is required for a new run')
-    if args.config_path is not None and not args.config_path.is_file():
+    if args.override and not args.resume:
+        parser.error('--override requires --resume')
+    if not args.config_path.is_file():
         parser.error(f'experiment YAML does not exist: {args.config_path}')
     return args
 
@@ -77,20 +77,8 @@ def validate_config(config: Config) -> None:
         raise ValueError('batch_size * sft_fraction must be a whole number.')
 
 
-def prepare_run(args: argparse.Namespace) -> tuple[Config, Path, str]:
-    """Create a new run or restore its saved configuration."""
-    run_dir = RUNS_DIR / args.run_name
-
-    if args.resume:
-        saved = load_run_config(run_dir)
-        config = rl_config_from_dict(saved['config'], args.run_name)
-        validate_config(config)
-        return config, run_dir, saved['wandb_run_id']
-
-    if (run_dir / CONFIG_FILE).exists():
-        raise FileExistsError(f'Run already exists: {run_dir}')
-    config = load_experiment_config(args.config_path, args.run_name).rl
-    validate_config(config)
+def validate_config_paths(config: Config) -> None:
+    """Validate files and directories required by RL training."""
     if config.sft_run_dir is None:
         raise ValueError('Set sft_run_dir in the RL configuration.')
     for dataset_path in (
@@ -110,6 +98,38 @@ def prepare_run(args: argparse.Namespace) -> tuple[Config, Path, str]:
         raise FileNotFoundError('SFT model_source directory does not exist.')
     if not (config.sft_run_dir / 'network_params.pt').is_file():
         raise FileNotFoundError('SFT network_params.pt does not exist.')
+
+
+def prepare_run(args: argparse.Namespace) -> tuple[Config, Path, str]:
+    """Create a new run or restore its saved configuration."""
+    run_dir = RUNS_DIR / args.run_name
+
+    if args.resume:
+        saved = load_run_config(run_dir)
+        saved_config = rl_config_from_dict(saved['config'], args.run_name)
+        config = load_experiment_config(
+            args.config_path,
+            args.run_name,
+            saved_config.seed,
+        ).rl
+        validate_config(config)
+        validate_config_paths(config)
+        changed_fields = changed_config_fields(saved_config, config)
+        if changed_fields and not args.override:
+            names = ', '.join(changed_fields)
+            raise ValueError(
+                f'Configuration differs for: {names}. Pass --override to '
+                'resume with these values.'
+            )
+        if changed_fields:
+            save_run_config(run_dir, config, saved['wandb_run_id'])
+        return config, run_dir, saved['wandb_run_id']
+
+    if has_run_config(run_dir):
+        raise FileExistsError(f'Run already exists: {run_dir}')
+    config = load_experiment_config(args.config_path, args.run_name).rl
+    validate_config(config)
+    validate_config_paths(config)
     run_dir.mkdir(parents=True, exist_ok=True)
     wandb_run_id = uuid.uuid4().hex
     save_run_config(run_dir, config, wandb_run_id)

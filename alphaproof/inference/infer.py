@@ -20,14 +20,8 @@ from alphaproof.core.paths import LEAN_PROJECT_DIR
 from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
 from alphaproof.inference.search_tree import serialize_search_tree
 from alphaproof.training.randomness import seed_everything
+from alphaproof.training.run_config import load_run_config
 from leantree import LeanProject
-
-
-def load_run_config(run_dir: Path) -> dict[str, Any]:
-    """Load settings saved alongside a network checkpoint."""
-    config_path = run_dir / 'config.json'
-    with config_path.open(encoding='utf-8') as file:
-        return json.load(file)
 
 
 def make_config(args: argparse.Namespace) -> Config:

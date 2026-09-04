@@ -187,6 +187,7 @@ def rl_config_from_dict(
 def load_experiment_config(
     path: Path,
     run_id: int | str = 0,
+    seed: int | None = None,
 ) -> ExperimentConfig:
     """Load both required sections of an experiment YAML file."""
     with path.open(encoding='utf-8') as config_file:
@@ -200,12 +201,12 @@ def load_experiment_config(
         sections['rl'], dict
     ):
         raise TypeError('The sft and rl sections must be mappings.')
+    rl_values = dict(cast(dict[str, Any], sections['rl']))
+    if rl_values['seed'] is None and seed is not None:
+        rl_values['seed'] = seed
     return ExperimentConfig(
         sft=sft_config_from_dict(cast(dict[str, Any], sections['sft'])),
-        rl=rl_config_from_dict(
-            cast(dict[str, Any], sections['rl']),
-            run_id,
-        ),
+        rl=rl_config_from_dict(rl_values, run_id),
     )
 
 

@@ -22,7 +22,8 @@ from alphaproof.core.config import (
 from alphaproof.core.network import Network
 from alphaproof.core.paths import RUNS_DIR
 from alphaproof.training.run_config import (
-    CONFIG_FILE,
+    changed_config_fields,
+    has_run_config,
     load_run_config,
     save_run_config,
 )
@@ -712,16 +713,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description='Fine-tune AlphaProof on LeanTree transitions.'
     )
     parser.add_argument('run_name', help='Directory name under data/runs.')
-    parser.add_argument('config_path', type=Path, nargs='?')
+    parser.add_argument('config_path', type=Path)
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--override', action='store_true')
     args = parser.parse_args(argv)
     if Path(args.run_name).name != args.run_name:
         parser.error('run_name must be a single directory name')
-    if args.resume and args.config_path is not None:
-        parser.error('CONFIG.yaml must be omitted when resuming')
-    if not args.resume and args.config_path is None:
-        parser.error('CONFIG.yaml is required for a new run')
-    if args.config_path is not None and not args.config_path.is_file():
+    if args.override and not args.resume:
+        parser.error('--override requires --resume')
+    if not args.config_path.is_file():
         parser.error(f'experiment YAML does not exist: {args.config_path}')
     return args
 
@@ -779,11 +779,21 @@ def prepare_run(
         if not run_dir.is_dir():
             raise FileNotFoundError(f'SFT run does not exist: {run_dir}')
         saved = load_run_config(run_dir)
-        config = sft_config_from_dict(saved['config'])
+        saved_config = sft_config_from_dict(saved['config'])
+        config = load_experiment_config(cli_args.config_path).sft
         wandb_run_id = saved['wandb_run_id']
         validate_config(config)
+        changed_fields = changed_config_fields(saved_config, config)
+        if changed_fields and not cli_args.override:
+            names = ', '.join(changed_fields)
+            raise ValueError(
+                f'Configuration differs for: {names}. Pass --override to '
+                'resume with these values.'
+            )
+        if changed_fields:
+            save_run_config(run_dir, config, wandb_run_id)
     else:
-        if (run_dir / CONFIG_FILE).exists():
+        if has_run_config(run_dir):
             raise FileExistsError(f'SFT run already exists: {run_dir}')
         config = load_experiment_config(cli_args.config_path).sft
         wandb_run_id = uuid.uuid4().hex
