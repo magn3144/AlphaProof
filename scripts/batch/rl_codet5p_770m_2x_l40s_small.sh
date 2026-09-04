@@ -6,8 +6,8 @@
 #BSUB -R "rusage[mem=10GB]"
 #BSUB -gpu "num=2:mode=exclusive_process"
 #BSUB -W 24:00
-#BSUB -o data/runs/rl_codet5p_770m_2x_l40s_small_01/lsf_%J.out
-#BSUB -e data/runs/rl_codet5p_770m_2x_l40s_small_01/lsf_%J.err
+#BSUB -o data/runs/rl_codet5p_770m_2x_l40s_small_03/lsf_%J.out
+#BSUB -e data/runs/rl_codet5p_770m_2x_l40s_small_03/lsf_%J.err
 
 set -eu
 
@@ -22,7 +22,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
 
-RUN_NAME="rl_codet5p_770m_2x_l40s_small_01"
+RUN_NAME="rl_codet5p_770m_2x_l40s_small_03"
 mkdir -p "data/runs/${RUN_NAME}"
 
 nvidia-smi

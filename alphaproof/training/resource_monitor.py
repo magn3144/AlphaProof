@@ -7,10 +7,7 @@ import threading
 import time
 from typing import Any
 
-import psutil
-
-
-RESOURCE_LOG_INTERVAL_SECONDS = 15.0
+RESOURCE_LOG_INTERVAL_SECONDS = 60.0
 MEMORY_UNIT_BYTES = {
     'KB': 1024,
     'MB': 1024**2,
@@ -54,13 +51,26 @@ def lsf_memory_bytes(job_id: str) -> int:
     )
 
 
+def lsf_cpu_seconds(job_id: str) -> float:
+    """Return the cumulative CPU time used by an LSF job."""
+    result = subprocess.run(
+        ['bjobs', '-noheader', '-o', 'cpu_used', job_id],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    hours, minutes, seconds = (
+        float(value) for value in result.stdout.strip().split(':')
+    )
+    return hours * 3600 + minutes * 60 + seconds
+
+
 class ResourceMonitor(threading.Thread):
     """Log job-scoped CPU, RAM, and GPU utilization to W&B."""
 
     def __init__(self, wandb_run: Any):
         super().__init__(name='resource-monitor', daemon=True)
         self.wandb_run = wandb_run
-        self.process = psutil.Process()
         self.job_id = os.environ['LSB_JOBID']
         self.allocated_cpus = int(os.environ['LSB_DJOB_NUMPROC'])
         self.allocated_memory_bytes = allocated_memory_bytes(
@@ -69,7 +79,7 @@ class ResourceMonitor(threading.Thread):
         )
         self.gpu_ids = os.environ['CUDA_VISIBLE_DEVICES']
         self.stop_event = threading.Event()
-        self.previous_cpu_seconds = self._cpu_seconds()
+        self.previous_cpu_seconds = lsf_cpu_seconds(self.job_id)
         self.previous_time = time.monotonic()
 
     def run(self) -> None:
@@ -82,7 +92,7 @@ class ResourceMonitor(threading.Thread):
 
     def log_resources(self) -> None:
         now = time.monotonic()
-        cpu_seconds = self._cpu_seconds()
+        cpu_seconds = lsf_cpu_seconds(self.job_id)
         cpu_percent = 100.0 * (
             cpu_seconds - self.previous_cpu_seconds
         ) / ((now - self.previous_time) * self.allocated_cpus)
@@ -99,13 +109,6 @@ class ResourceMonitor(threading.Thread):
             'resources/gpu_utilization_percent': gpu_utilization,
             'resources/gpu_memory_percent': gpu_memory_percent,
         })
-
-    def _processes(self) -> list[psutil.Process]:
-        return [self.process, *self.process.children(recursive=True)]
-
-    def _cpu_seconds(self) -> float:
-        cpu_times = [process.cpu_times() for process in self._processes()]
-        return sum(times.user + times.system for times in cpu_times)
 
     def _gpu_metrics(self) -> tuple[float, float]:
         result = subprocess.run(
