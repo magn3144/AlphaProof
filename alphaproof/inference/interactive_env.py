@@ -727,7 +727,11 @@ def validate_run_dir(parser: argparse.ArgumentParser, run_dir: Path) -> None:
     if not run_dir.is_dir():
         parser.error(f'Run does not exist: {run_dir}')
     has_sft_params = (run_dir / 'network_params.pt').is_file()
-    has_rl_params = any((run_dir / 'checkpoints').glob('step_*.pt'))
+    checkpoints_dir = run_dir / 'checkpoints'
+    has_rl_params = (
+        (checkpoints_dir / 'latest.pt').is_file()
+        or any(checkpoints_dir.glob('step_*.pt'))
+    )
     if not has_sft_params and not has_rl_params:
         parser.error(f'Run contains no network parameters: {run_dir}')
 

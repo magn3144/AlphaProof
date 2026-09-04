@@ -64,14 +64,24 @@ def make_config(args: argparse.Namespace) -> Config:
 def load_network_checkpoint(run_dir: Path, network: Network) -> Path:
     """Load the latest RL checkpoint or the SFT network parameters."""
     checkpoints = sorted((run_dir / 'checkpoints').glob('step_*.pt'))
+    latest_path = run_dir / 'checkpoints' / 'latest.pt'
+    if latest_path.is_file():
+        checkpoints.append(latest_path)
     if checkpoints:
-        checkpoint_path = checkpoints[-1]
-        checkpoint = torch.load(
-            checkpoint_path,
-            map_location='cpu',
-            weights_only=True,
+        candidates = [
+            (
+                path,
+                cast(
+                    dict[str, Any],
+                    torch.load(path, map_location='cpu', weights_only=True),
+                ),
+            )
+            for path in checkpoints[-2:]
+        ]
+        checkpoint_path, checkpoint = max(
+            candidates,
+            key=lambda item: int(item[1]['step']),
         )
-        checkpoint = cast(dict[str, Any], checkpoint)
         network.params = cast(Params, checkpoint['network_params'])
         return checkpoint_path
 
@@ -141,7 +151,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if not args.run_dir.is_dir():
         parser.error(f'Run does not exist: {args.run_dir}')
     has_sft_params = (args.run_dir / 'network_params.pt').is_file()
-    has_rl_params = any((args.run_dir / 'checkpoints').glob('step_*.pt'))
+    checkpoints_dir = args.run_dir / 'checkpoints'
+    has_rl_params = (
+        (checkpoints_dir / 'latest.pt').is_file()
+        or any(checkpoints_dir.glob('step_*.pt'))
+    )
     if not has_sft_params and not has_rl_params:
         parser.error(f'Run contains no network parameters: {args.run_dir}')
     if not args.lean_project.is_dir():

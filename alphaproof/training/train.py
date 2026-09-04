@@ -99,6 +99,7 @@ def alphaproof_train(
         network.load_params(config.initial_params_path)
         start_step = 0
         storage.save_checkpoint(start_step, network)
+        storage.save_latest_checkpoint(start_step, network)
 
     games_per_iteration = total_games // config.training_iterations
     steps_per_iteration = config.training_steps // config.training_iterations
@@ -137,6 +138,7 @@ def alphaproof_train(
                     steps_to_run,
                     logger,
                 )
+                storage.save_latest_checkpoint(step, network)
             if iteration + 1 < config.training_iterations:
                 engine.resume()
 
