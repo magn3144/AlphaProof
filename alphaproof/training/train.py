@@ -104,8 +104,8 @@ def alphaproof_train(
     step = start_step
 
     with (
-        ParallelSearchEngine(config, network) as engine,
-        ParallelSearchEngine(config, network) as validation_engine,
+        ParallelSearchEngine(config, network, logger) as engine,
+        ParallelSearchEngine(config, network, logger) as validation_engine,
     ):
         for iteration in range(num_iterations):
             transition_target += config.transitions_per_iteration

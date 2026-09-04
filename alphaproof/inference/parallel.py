@@ -4,6 +4,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from threading import Barrier, Condition, Lock, Semaphore, Thread, local
 from time import perf_counter
+from typing import Protocol
 
 from alphaproof.core.actors import ObjectiveRejection, play_game
 from alphaproof.core.config import Config
@@ -51,6 +52,13 @@ class _InferenceRequest:
     future: Future[NetworkSamplingOutput]
 
 
+class InferenceBatchLogger(Protocol):
+    """Logger notified after each model inference batch."""
+
+    def log_inference_batch(self, batch_size: int) -> None:
+        """Log the number of requests processed in one batch."""
+
+
 class _InferenceBatcher:
     """Owns the GPU model and batch synchronous requests from search workers."""
 
@@ -59,6 +67,7 @@ class _InferenceBatcher:
         network: Network,
         max_batch_size: int,
         timeout: float,
+        logger: InferenceBatchLogger | None,
     ):
         if max_batch_size < 1:
             raise ValueError('Inference batch size must be positive.')
@@ -67,6 +76,7 @@ class _InferenceBatcher:
         self.network = network
         self.max_batch_size = max_batch_size
         self.timeout = timeout
+        self.logger = logger
         self._condition = Condition()
         self._pending: deque[_InferenceRequest] = deque()
         self._paused = False
@@ -193,6 +203,8 @@ class _InferenceBatcher:
                     request.observation for request in batch
                 ])
                 model_seconds = perf_counter() - model_started
+                if self.logger is not None:
+                    self.logger.log_inference_batch(len(batch))
             except BaseException as error:
                 self._fail(error, batch)
                 return
@@ -242,6 +254,7 @@ class ParallelSearchEngine:
         self,
         config: Config,
         network: Network,
+        inference_logger: InferenceBatchLogger | None,
     ):
         if config.num_actors < 1:
             raise ValueError('Parallel search count must be positive.')
@@ -260,6 +273,7 @@ class ParallelSearchEngine:
             network,
             min(config.inference_batch_size, config.num_actors),
             config.inference_batch_timeout,
+            inference_logger,
         )
         self._executor = ThreadPoolExecutor(
             max_workers=self.parallel_searches,

@@ -198,7 +198,7 @@ def main() -> None:
         )
         for record in records
     ]
-    with ParallelSearchEngine(config, network) as engine:
+    with ParallelSearchEngine(config, network, None) as engine:
         search_results = engine.search(requests)
         inference_stats = engine.inference_stats
 

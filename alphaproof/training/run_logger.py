@@ -53,6 +53,7 @@ def initialize_wandb(
     wandb_run.define_metric(
         'validation/*', step_metric='validation/transition'
     )
+    wandb_run.define_metric('inference/*')
     wandb_run.define_metric('resources/*')
     return wandb_run
 
@@ -249,6 +250,10 @@ class RunLogger:
             f'{stats.model_seconds:.1f}s.',
             flush=True,
         )
+
+    def log_inference_batch(self, batch_size: int) -> None:
+        """Log the actual size of a completed inference batch."""
+        self.wandb_run.log({'inference/batch_size': batch_size})
 
     def log_validation(
         self,
