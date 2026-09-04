@@ -21,16 +21,14 @@ def run_validation_if_due(
     engine: ParallelSearchEngine,
     logger: RunLogger,
     validation_theorems: list[str],
+    transition_count: int,
 ) -> None:
-    """Run validation when the completed-game count reaches an interval."""
-    game = logger.games_completed
-    if (
-        game > 0
-        and game % config.theorem_validation_interval_games == 0
-        and game not in logger.validation_games
-    ):
+    """Run validation after crossing a replay transition interval."""
+    interval = config.theorem_validation_interval_transitions
+    transition = transition_count // interval * interval
+    if transition > 0 and transition not in logger.validation_transitions:
         logger.log_validation(
-            game,
+            transition,
             validate_theorems(config, engine, validation_theorems),
         )
         engine.take_inference_stats()
@@ -39,11 +37,12 @@ def run_validation_if_due(
 def make_actor_request(
     matchmaker: Matchmaker,
     logger: RunLogger,
+    transition_target: int,
 ) -> SearchRequest:
     """Assign and record one actor search."""
     assignment = matchmaker.get_start_position()
     request_id = logger.next_actor_request_id()
-    logger.log_game_start(request_id, assignment)
+    logger.log_game_start(request_id, assignment, transition_target)
     return SearchRequest(
         request_id=request_id,
         theorem=assignment.theorem,
@@ -80,7 +79,11 @@ def process_actor_result(
     if game.root.is_optimal:
         replay_buffer.save_game(game)
     matchmaker.send_game(game)
-    logger.log_game(game, len(replay_buffer))
+    logger.log_game(
+        game,
+        len(replay_buffer),
+        replay_buffer.transition_count,
+    )
 
 
 def run_actor_phase(
@@ -92,31 +95,43 @@ def run_actor_phase(
     replay_buffer: ReplayBuffer,
     matchmaker: Matchmaker,
     logger: RunLogger,
-    game_target: int,
+    transition_target: int,
 ) -> None:
-    """Run independently assigned searches to a target game count."""
+    """Run independently assigned searches to a transition target."""
+    logger.log_actor_start(transition_target)
     validation_theorems = load_validation_theorems(config, run_dir, resume)
-    run_validation_if_due(config, validation_engine, logger, validation_theorems)
+    run_validation_if_due(
+        config,
+        validation_engine,
+        logger,
+        validation_theorems,
+        replay_buffer.transition_count,
+    )
+    if replay_buffer.transition_count < transition_target:
+        engine.resume()
 
-    while logger.games_completed < game_target:
+    while replay_buffer.transition_count < transition_target:
+        interval = config.theorem_validation_interval_transitions
         next_validation = (
-            logger.games_completed
-            // config.theorem_validation_interval_games
-            + 1
-        ) * config.theorem_validation_interval_games
-        boundary = min(game_target, next_validation)
+            replay_buffer.transition_count // interval + 1
+        ) * interval
+        phase_target = min(transition_target, next_validation)
 
         while engine.num_searches < engine.parallel_searches:
-            engine.submit(make_actor_request(matchmaker, logger))
+            engine.submit(
+                make_actor_request(matchmaker, logger, transition_target)
+            )
 
-        while logger.games_completed < boundary:
+        while replay_buffer.transition_count < phase_target:
             process_actor_result(
                 engine.next_result(),
                 replay_buffer,
                 matchmaker,
                 logger,
             )
-            engine.submit(make_actor_request(matchmaker, logger))
+            engine.submit(
+                make_actor_request(matchmaker, logger, transition_target)
+            )
 
         engine.pause()
         logger.log_inference(engine.take_inference_stats())
@@ -125,6 +140,7 @@ def run_actor_phase(
             validation_engine,
             logger,
             validation_theorems,
+            replay_buffer.transition_count,
         )
-        if logger.games_completed < game_target:
+        if replay_buffer.transition_count < transition_target:
             engine.resume()

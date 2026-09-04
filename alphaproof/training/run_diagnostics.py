@@ -22,23 +22,45 @@ class RunDiagnostics:
         self.status: dict[str, object] = {}
         faulthandler.enable(file=self.crash_file, all_threads=True)
 
-    def game_started(self, request_id: str, game: Game) -> None:
+    def game_started(
+        self,
+        request_id: str,
+        game: Game,
+        transition_target: int,
+    ) -> None:
         """Record a game before Lean starts processing it."""
         self._write_status(
             {
                 'state': 'running',
                 'phase': 'actor',
+                'transition_target': transition_target,
                 'request_id': request_id,
                 'theorem': game.theorem,
             }
         )
 
-    def learner_started(self, start_step: int, target_step: int) -> None:
+    def actor_started(self, transition_target: int) -> None:
+        """Record the replay transition target being collected."""
+        self._write_status(
+            {
+                'state': 'running',
+                'phase': 'actor',
+                'transition_target': transition_target,
+            }
+        )
+
+    def learner_started(
+        self,
+        start_step: int,
+        target_step: int,
+        transition_target: int,
+    ) -> None:
         """Record the learner step range currently being processed."""
         self._write_status(
             {
                 'state': 'running',
                 'phase': 'learner',
+                'transition_target': transition_target,
                 'start_step': start_step,
                 'target_step': target_step,
             }
