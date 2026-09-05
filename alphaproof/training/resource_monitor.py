@@ -51,7 +51,7 @@ def lsf_memory_bytes(job_id: str) -> int:
     )
 
 
-def lsf_cpu_seconds(job_id: str) -> float:
+def lsf_cpu_seconds(job_id):
     """Return the cumulative CPU time used by an LSF job."""
     result = subprocess.run(
         ['bjobs', '-noheader', '-o', 'cpu_used', job_id],
@@ -59,9 +59,10 @@ def lsf_cpu_seconds(job_id: str) -> float:
         capture_output=True,
         text=True,
     )
-    hours, minutes, seconds = (
-        float(value) for value in result.stdout.strip().split(':')
-    )
+    value = result.stdout.strip()
+    if value == '-':
+        return None
+    hours, minutes, seconds = (float(part) for part in value.split(':'))
     return hours * 3600 + minutes * 60 + seconds
 
 
@@ -84,7 +85,10 @@ class ResourceMonitor(threading.Thread):
 
     def run(self) -> None:
         while not self.stop_event.wait(RESOURCE_LOG_INTERVAL_SECONDS):
-            self.log_resources()
+            try:
+                self.log_resources()
+            except Exception as error:
+                print(f'Resource monitoring sample skipped: {error}', flush=True)
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -93,22 +97,25 @@ class ResourceMonitor(threading.Thread):
     def log_resources(self) -> None:
         now = time.monotonic()
         cpu_seconds = lsf_cpu_seconds(self.job_id)
-        cpu_percent = 100.0 * (
-            cpu_seconds - self.previous_cpu_seconds
-        ) / ((now - self.previous_time) * self.allocated_cpus)
-        self.previous_cpu_seconds = cpu_seconds
-        self.previous_time = now
+        metrics = {}
+        if cpu_seconds is not None:
+            if self.previous_cpu_seconds is not None:
+                metrics['resources/cpu_utilization_percent'] = 100.0 * (
+                    cpu_seconds - self.previous_cpu_seconds
+                ) / ((now - self.previous_time) * self.allocated_cpus)
+            self.previous_cpu_seconds = cpu_seconds
+            self.previous_time = now
 
         memory_bytes = lsf_memory_bytes(self.job_id)
         gpu_utilization, gpu_memory_percent = self._gpu_metrics()
-        self.wandb_run.log({
-            'resources/cpu_utilization_percent': cpu_percent,
+        metrics.update({
             'resources/cpu_memory_percent': (
                 100.0 * memory_bytes / self.allocated_memory_bytes
             ),
             'resources/gpu_utilization_percent': gpu_utilization,
             'resources/gpu_memory_percent': gpu_memory_percent,
         })
+        self.wandb_run.log(metrics)
 
     def _gpu_metrics(self) -> tuple[float, float]:
         result = subprocess.run(
@@ -139,6 +146,10 @@ def start_resource_monitor(wandb_run: Any) -> ResourceMonitor | None:
         or 'LSB_EFFECTIVE_RSRCREQ' not in os.environ
     ):
         return None
-    monitor = ResourceMonitor(wandb_run)
-    monitor.start()
-    return monitor
+    try:
+        monitor = ResourceMonitor(wandb_run)
+        monitor.start()
+        return monitor
+    except Exception as error:
+        print(f'Resource monitoring disabled: {error}', flush=True)
+        return None
