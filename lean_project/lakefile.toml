@@ -10,3 +10,7 @@ name = "mathlib"
 scope = "leanprover-community"
 git = "https://github.com/leanprover-community/mathlib4"
 rev = "v4.27.0"
+
+[[require]]
+name = "REPL"
+path = "../vendor/leantree/lean-repl"

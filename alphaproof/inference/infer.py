@@ -14,7 +14,7 @@ from alphaproof.core.config import (
     sft_config_from_dict,
 )
 from alphaproof.core.environment import Environment
-from alphaproof.core.game import extract_proof_script
+from alphaproof.core.game import extract_proof_script, extract_transitions
 from alphaproof.core.network import Network, Params
 from alphaproof.core.paths import LEAN_PROJECT_DIR
 from alphaproof.inference.parallel import ParallelSearchEngine, SearchRequest
@@ -51,12 +51,15 @@ def make_config(args: argparse.Namespace) -> Config:
     config.num_simulations = args.num_simulations
     config.batch_size = 1
     config.num_actors = args.parallel_searches
+    config.max_concurrent_lean_imports = args.max_concurrent_lean_imports
+    config.inference_num_gpus = args.inference_num_gpus
     config.num_games = 1
     config.num_games_per_actor = 1
     config.inference_batch_size = args.inference_batch_size
     config.inference_batch_timeout = args.inference_batch_timeout
     config.num_sampled_actions = args.num_sampled_actions
     config.tactic_timeout = args.tactic_timeout
+    config.final_check_timeout = args.final_check_timeout
     config.seed = args.seed
     return config
 
@@ -105,6 +108,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--input', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--transitions-output', type=Path, required=True)
+    parser.add_argument('--batch-id', required=True)
     parser.add_argument(
         '--run-dir',
         type=Path,
@@ -129,6 +134,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         '--parallel-searches', type=int, default=defaults.num_actors
     )
     parser.add_argument(
+        '--max-concurrent-lean-imports',
+        type=int,
+        default=defaults.max_concurrent_lean_imports,
+    )
+    parser.add_argument(
+        '--inference-num-gpus',
+        type=int,
+        default=defaults.inference_num_gpus,
+    )
+    parser.add_argument(
         '--inference-batch-size',
         type=int,
         default=defaults.inference_batch_size,
@@ -140,9 +155,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--seed', type=int, default=defaults.seed)
     parser.add_argument(
+        '--final-check-timeout',
+        type=float,
+        default=defaults.final_check_timeout,
+    )
+    parser.add_argument(
         '--stop-on-solution',
         action=argparse.BooleanOptionalAction,
         default=True,
+    )
+    parser.add_argument(
+        '--include-trees',
+        action=argparse.BooleanOptionalAction,
+        default=False,
     )
     args = parser.parse_args(argv)
 
@@ -168,10 +193,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error('--tactic-timeout must be positive')
     if args.parallel_searches < 1:
         parser.error('--parallel-searches must be positive')
+    if args.max_concurrent_lean_imports < 1:
+        parser.error('--max-concurrent-lean-imports must be positive')
+    if args.inference_num_gpus < 1:
+        parser.error('--inference-num-gpus must be positive')
     if args.inference_batch_size < 1:
         parser.error('--inference-batch-size must be positive')
     if args.inference_batch_timeout < 0:
         parser.error('--inference-batch-timeout cannot be negative')
+    if args.final_check_timeout <= 0:
+        parser.error('--final-check-timeout must be positive')
     return args
 
 
@@ -190,6 +221,17 @@ def main() -> None:
 
     with args.input.open(encoding='utf-8') as input_file:
         records = [json.loads(line) for line in input_file if line.strip()]
+    records_by_request = {
+        str(record['request_id']): record
+        for record in records
+    }
+    if len(records_by_request) != len(records):
+        raise ValueError('Inference request IDs must be unique.')
+    for record in records:
+        if record['source'] not in ('dataset', 'conjecture'):
+            raise ValueError('Inference source must be dataset or conjecture.')
+        if int(record['attempt']) < 0:
+            raise ValueError('Inference attempt must be nonnegative.')
     requests = [
         SearchRequest(
             request_id=str(record['request_id']),
@@ -211,9 +253,18 @@ def main() -> None:
         flush=True,
     )
 
-    with args.output.open('w', encoding='utf-8') as output_file:
+    output_temporary = args.output.with_suffix(args.output.suffix + '.tmp')
+    transitions_temporary = args.transitions_output.with_suffix(
+        args.transitions_output.suffix + '.tmp'
+    )
+    with (
+        output_temporary.open('w', encoding='utf-8') as output_file,
+        transitions_temporary.open('w', encoding='utf-8') as transitions_file,
+    ):
         for search_result in search_results:
             game = search_result.game
+            request_id = search_result.request.request_id
+            request_record = records_by_request[request_id]
             proof_lines = (
                 extract_proof_script(game.root)
                 if game.root is not None and game.root.is_optimal
@@ -223,7 +274,10 @@ def main() -> None:
                 'proved' if proof_lines is not None else 'failed'
             )
             result = {
-                'request_id': search_result.request.request_id,
+                'request_id': request_id,
+                'theorem_id': str(request_record['theorem_id']),
+                'source': str(request_record['source']),
+                'attempt': int(request_record['attempt']),
                 'status': status,
                 'proof': (
                     '\n'.join(proof_lines)
@@ -232,14 +286,39 @@ def main() -> None:
                 ),
                 'error': game.error,
                 'duration_seconds': search_result.duration_seconds,
-                'tree': (
+                'simulations_allocated': game.num_simulations,
+                'simulations_used': len(game.timings.tactic_generations),
+                'transition_count': 0,
+            }
+            transitions = (
+                extract_transitions(game.root)
+                if proof_lines is not None
+                else []
+            )
+            result['transition_count'] = len(transitions)
+            if args.include_trees:
+                result['tree'] = (
                     None
                     if search_result.rejection is not None
                     else serialize_search_tree(game.root)
-                ),
-            }
+                )
             output_file.write(json.dumps(result) + '\n')
-            output_file.flush()
+            for index, (state, action, value) in enumerate(transitions):
+                transition = {
+                    'transition_id': f'{request_id}:{index}',
+                    'batch_id': args.batch_id,
+                    'request_id': request_id,
+                    'theorem_id': str(request_record['theorem_id']),
+                    'source': str(request_record['source']),
+                    'attempt': int(request_record['attempt']),
+                    'index': index,
+                    'state': str(state),
+                    'action': str(action),
+                    'value': value,
+                }
+                transitions_file.write(json.dumps(transition) + '\n')
+    output_temporary.replace(args.output)
+    transitions_temporary.replace(args.transitions_output)
 
 
 if __name__ == '__main__':

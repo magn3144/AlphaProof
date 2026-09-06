@@ -2,6 +2,7 @@ import json
 import math
 import random
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import AutoTokenizer
@@ -43,6 +44,7 @@ class ReplayBuffer:
         self.path.touch(exist_ok=True)
         self.buffer: list[Transition] = []
         self.validation_buffer: list[Transition] = []
+        self.transition_ids: set[str] = set()
         self.transition_count = 0
         self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_model)
         sft_examples, sft_stats = load_examples(
@@ -63,7 +65,39 @@ class ReplayBuffer:
     def save_game(self, game: Game) -> None:
         """Add solved-game transitions to the replay window and JSONL file."""
         for observation, action, value in extract_transitions(game.root):
-            self._save_transition((str(observation), str(action), value))
+            transition_id = f'actor:{self.transition_count + 1}'
+            self._save_transition(
+                transition_id,
+                (str(observation), str(action), value),
+                None,
+            )
+
+    def add_transitions(self, records: list[dict[str, Any]]) -> int:
+        """Persist new externally generated transitions."""
+        added = 0
+        for record in records:
+            transition_id = str(record['transition_id'])
+            if transition_id in self.transition_ids:
+                continue
+            transition = (
+                str(record['state']),
+                str(record['action']),
+                float(record['value']),
+            )
+            metadata = {
+                name: record[name]
+                for name in (
+                    'batch_id',
+                    'request_id',
+                    'theorem_id',
+                    'source',
+                    'attempt',
+                    'index',
+                )
+            }
+            self._save_transition(transition_id, transition, metadata)
+            added += 1
+        return added
 
     def __len__(self) -> int:
         """Return the number of train transitions in the replay window."""
@@ -97,8 +131,14 @@ class ReplayBuffer:
             for transition in self.validation_buffer[:batch_size]
         ]
 
-    def _save_transition(self, transition: Transition) -> None:
+    def _save_transition(
+        self,
+        transition_id: str,
+        transition: Transition,
+        metadata: dict[str, Any] | None,
+    ) -> None:
         """Assign and persist one transition."""
+        self.transition_ids.add(transition_id)
         self.transition_count += 1
         validation = self.transition_count % self.validation_stride == 0
         target = self.validation_buffer if validation else self.buffer
@@ -111,12 +151,15 @@ class ReplayBuffer:
             self.buffer = self.buffer[-self.window_size:]
 
         state, action, value = transition
-        record = {
+        record: dict[str, Any] = {
+            'transition_id': transition_id,
             'state': state,
             'action': action,
             'value': value,
             'validation': validation,
         }
+        if metadata is not None:
+            record.update(metadata)
         with self.path.open('a', encoding='utf-8') as replay_file:
             replay_file.write(json.dumps(record) + '\n')
 
@@ -127,6 +170,7 @@ class ReplayBuffer:
         with self.path.open(encoding='utf-8') as replay_file:
             for line in replay_file:
                 record = json.loads(line)
+                self.transition_ids.add(str(record['transition_id']))
                 transition = (
                     str(record['state']),
                     str(record['action']),
