@@ -43,16 +43,16 @@ def validate_config(config: Config) -> None:
         'num_simulations',
         'batch_size',
         'num_actors',
+        'num_games_per_actor',
         'max_concurrent_lean_imports',
         'inference_num_gpus',
         'inference_batch_size',
         'num_sampled_actions',
         'rollout_max_action_length',
         'training_steps',
-        'transitions_per_iteration',
-        'training_steps_per_iteration',
+        'training_iterations',
         'checkpoint_interval',
-        'theorem_validation_interval_transitions',
+        'theorem_validation_interval_games',
     )
     for name in positive:
         if getattr(config, name) < 1:

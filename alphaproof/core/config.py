@@ -63,6 +63,7 @@ class Config:
     num_simulations: int
     batch_size: int
     num_actors: int
+    num_games_per_actor: int
     max_concurrent_lean_imports: int
     inference_num_gpus: int
     inference_batch_size: int
@@ -84,15 +85,14 @@ class Config:
     max_action_length: int
     rollout_max_action_length: int
     training_steps: int
-    transitions_per_iteration: int
-    training_steps_per_iteration: int
+    training_iterations: int
     checkpoint_interval: int
     window_size: int
     value_weight: float
     validation_fraction: float
     validation_batch_size: int
     validation_interval: int
-    theorem_validation_interval_transitions: int
+    theorem_validation_interval_games: int
     theorem_validation_num_theorems: int
     log_interval: int
     reward_window: int
@@ -124,6 +124,7 @@ class Config:
     validation_dataset_path: Path = field(init=False)
     test_dataset_path: Path = field(init=False)
     initial_params_path: Path | None = field(init=False)
+    num_games: int = field(init=False)
     mm_disprove_rate: float = field(init=False)
 
     def __post_init__(self) -> None:
@@ -134,6 +135,7 @@ class Config:
         self.train_dataset_path = self.dataset_dir / 'train.jsonl'
         self.validation_dataset_path = self.dataset_dir / 'validation.jsonl'
         self.test_dataset_path = self.dataset_dir / 'test.jsonl'
+        self.num_games = self.num_games_per_actor
         self.mm_disprove_rate = self.disprove_rate
         if self.sft_run_dir is None:
             self.initial_params_path = None
@@ -217,6 +219,7 @@ def serializable_config(config: Config | SFTConfig) -> dict[str, Any]:
         'validation_dataset_path',
         'test_dataset_path',
         'initial_params_path',
+        'num_games',
         'mm_disprove_rate',
     }
     return {

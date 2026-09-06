@@ -24,11 +24,10 @@ def train_network(
     replay_buffer: ReplayBuffer,
     start_step: int,
     num_steps: int,
-    transition_target: int,
     logger: RunLogger,
 ) -> int:
     """Run one learner phase and return the latest global step."""
-    logger.log_learner_start(start_step, num_steps, transition_target)
+    logger.log_learner_start(start_step, num_steps)
     validation_batch = replay_buffer.validation_batch(
         config.validation_batch_size
     )
@@ -82,6 +81,11 @@ def alphaproof_train(
     """Coordinate resumable actor jobs and learner updates."""
     print(f'Training seed: {config.seed}', flush=True)
     seed_everything(config.seed)
+    total_games = config.num_actors * config.num_games
+    if total_games % config.training_iterations != 0:
+        raise ValueError('Actor games must be divisible by training iterations.')
+    if config.training_steps % config.training_iterations != 0:
+        raise ValueError('Training steps must be divisible by training iterations.')
 
     storage = SharedStorage(run_dir)
     replay_buffer = ReplayBuffer(config, run_dir / REPLAY_FILE)
@@ -98,18 +102,16 @@ def alphaproof_train(
         storage.save_checkpoint(start_step, network)
         storage.save_latest_checkpoint(start_step, network)
 
-    num_iterations = (
-        config.training_steps + config.training_steps_per_iteration - 1
-    ) // config.training_steps_per_iteration
-    transition_target = 0
+    games_per_iteration = total_games // config.training_iterations
+    steps_per_iteration = config.training_steps // config.training_iterations
     step = start_step
 
     with (
         ParallelSearchEngine(config, network, logger) as engine,
         ParallelSearchEngine(config, network, logger) as validation_engine,
     ):
-        for iteration in range(num_iterations):
-            transition_target += config.transitions_per_iteration
+        for iteration in range(config.training_iterations):
+            game_target = (iteration + 1) * games_per_iteration
             run_actor_phase(
                 config,
                 run_dir,
@@ -119,13 +121,10 @@ def alphaproof_train(
                 replay_buffer,
                 matchmaker,
                 logger,
-                transition_target,
+                game_target,
             )
 
-            step_target = min(
-                (iteration + 1) * config.training_steps_per_iteration,
-                config.training_steps,
-            )
+            step_target = (iteration + 1) * steps_per_iteration
             steps_to_run = step_target - step
             if (
                 steps_to_run > 0
@@ -138,10 +137,12 @@ def alphaproof_train(
                     replay_buffer,
                     step,
                     steps_to_run,
-                    transition_target,
                     logger,
                 )
                 storage.save_latest_checkpoint(step, network)
+            if iteration + 1 < config.training_iterations:
+                engine.resume()
+
     if step % config.checkpoint_interval != 0:
         storage.save_checkpoint(step, network)
     return network

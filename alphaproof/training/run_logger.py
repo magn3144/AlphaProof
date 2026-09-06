@@ -49,10 +49,8 @@ def initialize_wandb(
     wandb_run.define_metric('learner/step')
     wandb_run.define_metric('train/*', step_metric='learner/step')
     wandb_run.define_metric('replay_validation/*', step_metric='learner/step')
-    wandb_run.define_metric('validation/transition')
-    wandb_run.define_metric(
-        'validation/*', step_metric='validation/transition'
-    )
+    wandb_run.define_metric('validation/game')
+    wandb_run.define_metric('validation/*', step_metric='validation/game')
     wandb_run.define_metric('inference/*')
     wandb_run.define_metric('resources/*')
     return wandb_run
@@ -87,46 +85,23 @@ class RunLogger:
             successes[-reward_window:], maxlen=reward_window
         )
         self.recent_rewards = deque(rewards[-reward_window:], maxlen=reward_window)
-        self.validation_transitions = self._load_validation_transitions()
+        self.validation_games = self._load_validation_games()
 
     def next_actor_request_id(self) -> str:
         """Return a unique actor request identifier for this process."""
         self.actor_requests_started += 1
         return f'train-{self.actor_requests_started}'
 
-    def log_actor_start(self, transition_target: int) -> None:
-        """Persist the transition target about to be collected."""
-        self.diagnostics.actor_started(transition_target)
-
-    def log_game_start(
-        self,
-        request_id: str,
-        game: Game,
-        transition_target: int,
-    ) -> None:
+    def log_game_start(self, request_id: str, game: Game) -> None:
         """Persist the game being started before Lean is launched."""
-        self.diagnostics.game_started(request_id, game, transition_target)
+        self.diagnostics.game_started(request_id, game)
         print(f'Starting {request_id}.', flush=True)
 
-    def log_learner_start(
-        self,
-        start_step: int,
-        num_steps: int,
-        transition_target: int,
-    ) -> None:
+    def log_learner_start(self, start_step: int, num_steps: int) -> None:
         """Persist the learner range about to run."""
-        self.diagnostics.learner_started(
-            start_step,
-            start_step + num_steps,
-            transition_target,
-        )
+        self.diagnostics.learner_started(start_step, start_step + num_steps)
 
-    def log_game(
-        self,
-        game: Game,
-        replay_size: int,
-        transition_count: int,
-    ) -> None:
+    def log_game(self, game: Game, replay_size: int) -> None:
         """Persist and log one actor result."""
         success = int(game.root.is_optimal)
         reward = int(game.root.value_target) if success else None
@@ -156,7 +131,6 @@ class RunLogger:
             'rolling_average_reward': rolling_reward,
             'num_simulations': game.num_simulations,
             'replay_size': replay_size,
-            'transition_count': transition_count,
         }
         with self.results_path.open('a', encoding='utf-8') as results_file:
             results_file.write(json.dumps(record) + '\n')
@@ -187,7 +161,6 @@ class RunLogger:
                 game.timings.internal_action_seconds
             ),
             'replay/train_size': replay_size,
-            'replay/transition_count': transition_count,
         }
         if game.timings.final_verification_seconds is not None:
             metrics['actor/final_verification_seconds'] = (
@@ -200,8 +173,7 @@ class RunLogger:
         self.wandb_run.log(metrics)
         message = (
             f'Game {self.games_completed}: success {success}, '
-            f'rolling success rate {rolling_success_rate:.3f}, '
-            f'replay transitions {transition_count}'
+            f'rolling success rate {rolling_success_rate:.3f}'
         )
         if reward is not None:
             message += f', reward {reward}'
@@ -259,7 +231,7 @@ class RunLogger:
 
     def log_validation(
         self,
-        transition: int,
+        game: int,
         games: Sequence[Game | None],
     ) -> None:
         """Persist and log one fixed-theorem validation pass."""
@@ -280,7 +252,7 @@ class RunLogger:
             else None
         )
         record = {
-            'transition': transition,
+            'game': game,
             'num_theorems': len(games),
             'num_solved': len(solved_games),
             'solve_rate': solve_rate,
@@ -290,19 +262,16 @@ class RunLogger:
             'a', encoding='utf-8'
         ) as validation_file:
             validation_file.write(json.dumps(record) + '\n')
-        self.validation_transitions.add(transition)
+        self.validation_games.add(game)
 
         metrics = {
-            'validation/transition': transition,
+            'validation/game': game,
             'validation/solve_rate': solve_rate,
             'validation/average_reward': average_reward,
         }
         self.wandb_run.log(metrics)
 
-        message = (
-            f'Validation after transition {transition}: '
-            f'solve rate {solve_rate:.3f}'
-        )
+        message = f'Validation after game {game}: solve rate {solve_rate:.3f}'
         if average_reward is not None:
             message += f', average reward {average_reward:.3f}'
         print(message, flush=True)
@@ -344,10 +313,10 @@ class RunLogger:
                     rewards.append(int(record['episode_reward']))
         return successes, rewards, proved_theorems
 
-    def _load_validation_transitions(self) -> set[int]:
-        """Load completed transition validation points when resuming."""
-        transitions = set()
+    def _load_validation_games(self) -> set[int]:
+        """Load completed validation points when resuming."""
+        games = set()
         with self.validation_results_path.open(encoding='utf-8') as results_file:
             for line in results_file:
-                transitions.add(int(json.loads(line)['transition']))
-        return transitions
+                games.add(int(json.loads(line)['game']))
+        return games

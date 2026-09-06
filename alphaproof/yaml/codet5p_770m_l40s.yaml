@@ -29,6 +29,7 @@ rl:
   num_simulations: 64
   batch_size: 10
   num_actors: 96
+  num_games_per_actor: 500
   max_concurrent_lean_imports: 32
   inference_num_gpus: 1
   inference_batch_size: 32
@@ -49,16 +50,15 @@ rl:
   max_state_length: 640
   max_action_length: 128
   rollout_max_action_length: 32
-  training_steps: 5000
-  transitions_per_iteration: 100
-  training_steps_per_iteration: 100
+  training_steps: 20000
+  training_iterations: 500
   checkpoint_interval: 250
   window_size: 250000
   value_weight: 0.01
   validation_fraction: 0.05
   validation_batch_size: 10
   validation_interval: 100
-  theorem_validation_interval_transitions: 2400
+  theorem_validation_interval_games: 2400
   theorem_validation_num_theorems: 384
   log_interval: 10
   reward_window: 100
