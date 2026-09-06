@@ -1,6 +1,7 @@
+# SFT on 1/2 data, followed by RL initialized from this SFT run.
 sft:
-  train_input: data/dataset/sft_small/train.jsonl
-  validation_input: data/dataset/sft_small/validation.jsonl
+  train_input: data/dataset/sft_1_2/train.jsonl
+  validation_input: data/dataset/sft_1_2/validation.jsonl
   model: models/Salesforce--codet5p-770m
   epochs: 1
   checkpoints_per_epoch: 1
@@ -28,38 +29,38 @@ sft:
 rl:
   num_simulations: 64
   batch_size: 10
-  num_actors: 192
-  num_games_per_actor: 500
-  max_concurrent_lean_imports: 32
-  inference_num_gpus: 2
-  inference_batch_size: 64
+  num_actors: 96
+  max_concurrent_lean_imports: 16
+  inference_num_gpus: 1
+  inference_batch_size: 32
   inference_batch_timeout: 0.05
   num_sampled_actions: 6
   tactic_timeout: 1.0
   final_check_timeout: 300.0
-  seed: null
+  seed: 0
   debug: false
   lr: 1.0e-5
   dtype: float32
   tokenizer_model: models/Salesforce--codet5p-770m
-  dataset_dir: data/dataset/numina_math_lean_passing_small
-  sft_dataset_path: data/dataset/leantree_mathlib_state_action_pairs.train.jsonl
+  dataset_dir: data/dataset/numina_math_lean_passing_1_2
+  sft_dataset_path: data/dataset/sft_1_2/train.jsonl
   sft_fraction: 0.1
   disprove_rate: 0.0
-  sft_run_dir: data/runs/sft_codet5p_770m_l40s_small
+  sft_run_dir: data/runs/sft_codet5p_770m_l40s_1_2_01
   max_state_length: 640
   max_action_length: 128
   rollout_max_action_length: 32
-  training_steps: 20000
-  training_iterations: 100
+  training_steps: 5000
+  transitions_per_iteration: 50
+  training_steps_per_iteration: 50
   checkpoint_interval: 250
-  window_size: 250000
+  window_size: 25000
   value_weight: 0.01
   validation_fraction: 0.05
   validation_batch_size: 10
-  validation_interval: 100
-  theorem_validation_interval_games: 2400
-  theorem_validation_num_theorems: 384
+  validation_interval: 20
+  theorem_validation_interval_transitions: 100
+  theorem_validation_num_theorems: 80
   log_interval: 10
   reward_window: 100
   wandb_project: alphaproof
